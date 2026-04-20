@@ -1,8 +1,15 @@
-# Nestjs specific
-/dist
+# Dependencies
 /node_modules
+
+# Next.js
+/.next/
+/out/
+/dist
 /build
-/tmp
+
+# Prisma
+prisma/dev.db
+prisma/dev.db-journal
 
 # Logs
 logs
@@ -22,3 +29,11 @@ lerna-debug.log*
 # temp directory
 .temp
 .tmp
+/tmp
+
+# Misc
+.DS_Store
+*.pem
+
+# Vercel/Railway
+.vercel
