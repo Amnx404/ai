@@ -86,8 +86,8 @@ model Site {
   allowedDomains String[]
   // RAG config
   allowedTopics  String[]
-  modelId        String       @default("google/gemini-2.5-flash")
-  temperature    Float        @default(0.3)
+  modelId        String       @default("google/gemini-3-flash-preview")
+  temperature    Float        @default(0.9)
   pineconeIndex  String?
   pineconeNs     String?
   liveVersion    Int          @default(1)

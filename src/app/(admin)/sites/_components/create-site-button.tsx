@@ -18,10 +18,17 @@ export function CreateSiteButton() {
       setName("");
       setPrimaryUrl("");
       setDomains("");
-      router.push(`/sites/${site.id}`);
+      router.push(`/sites/${site.id}?setup=1&tab=branding`);
       router.refresh();
     },
   });
+
+  const normalizeHttps = (raw: string) => {
+    const s = raw.trim();
+    if (!s) return "";
+    if (/^https?:\/\//i.test(s)) return s;
+    return `https://${s}`;
+  };
 
   return (
     <>
@@ -59,7 +66,7 @@ export function CreateSiteButton() {
                 </label>
                 <input
                   value={primaryUrl}
-                  onChange={(e) => setPrimaryUrl(e.target.value)}
+                  onChange={(e) => setPrimaryUrl(normalizeHttps(e.target.value))}
                   placeholder="https://client.com"
                   className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
                 />
@@ -94,7 +101,7 @@ export function CreateSiteButton() {
                   if (!name.trim()) return;
                   createSite.mutate({
                     name: name.trim(),
-                    primaryUrl: primaryUrl.trim(),
+                    primaryUrl: normalizeHttps(primaryUrl),
                     allowedDomains: domains
                       .split(",")
                       .map((d) => d.trim())

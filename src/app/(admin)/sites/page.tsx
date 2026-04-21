@@ -32,8 +32,24 @@ export default async function SitesPage() {
       </div>
 
       {sites.length === 0 ? (
-        <div className="rounded-2xl border-2 border-dashed border-gray-200 p-12 text-center">
-          <p className="text-sm text-gray-500">No sites yet. Create one to get started.</p>
+        <div className="rounded-2xl border border-gray-200 bg-white p-10 shadow-sm">
+          <h2 className="text-lg font-semibold text-gray-900">Create your first site</h2>
+          <p className="mt-2 text-sm text-gray-600">
+            You’ll add your website URL, set security domains, scrape your docs, and get an embed
+            snippet.
+          </p>
+          <div className="mt-6 flex flex-wrap gap-2 text-xs">
+            {["1) Primary URL", "2) Allowed domains", "3) Scrape knowledge base", "4) Embed"].map(
+              (s) => (
+                <span
+                  key={s}
+                  className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-gray-700"
+                >
+                  {s}
+                </span>
+              )
+            )}
+          </div>
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

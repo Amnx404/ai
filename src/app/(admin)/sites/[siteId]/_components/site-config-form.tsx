@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { type Site } from "@prisma/client";
 
@@ -8,26 +8,43 @@ import { resolvePineconeTarget } from "~/lib/pinecone-resolve";
 import { api } from "~/trpc/react";
 
 const MODELS = [
-  { id: "google/gemini-2.5-flash", label: "Gemini 2.5 Flash (default)" },
-  { id: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-  { id: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet" },
-  { id: "openai/gpt-4o-mini", label: "GPT-4o Mini" },
-  { id: "openai/gpt-4o", label: "GPT-4o" },
-  { id: "meta-llama/llama-3.3-70b-instruct", label: "Llama 3.3 70B" },
+  { id: "google/gemini-3-flash-preview", label: "Gemini 3 Flash Preview (recommended)" },
+  { id: "google/gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+
+  { id: "openai/gpt-5.4", label: "GPT-5.4" },
+
 ];
 
 export function SiteConfigForm({
   site,
   defaultPineconeIndex,
   defaultPineconeIndexHost,
+  initialTab,
 }: {
   site: Site;
   defaultPineconeIndex: string;
   defaultPineconeIndexHost: string;
+  initialTab?: "branding" | "behavior" | "knowledge";
 }) {
   const router = useRouter();
+  const normalizeHttps = (raw: string) => {
+    const s = raw.trim();
+    if (!s) return "";
+    if (/^https?:\/\//i.test(s)) return s;
+    return `https://${s}`;
+  };
+
+  const baseOrigin = (raw: string) => {
+    try {
+      const u = new URL(normalizeHttps(raw));
+      return `${u.origin}/`;
+    } catch {
+      return "";
+    }
+  };
+
   const [tab, setTab] = useState<"branding" | "behavior" | "knowledge">(
-    "branding"
+    initialTab ?? "branding"
   );
 
   const initialScrapeConfig = useMemo(() => {
@@ -50,7 +67,6 @@ export function SiteConfigForm({
     pineconeIndex: site.pineconeIndex ?? "",
     pineconeNs: site.pineconeNs ?? "",
     liveVersion: site.liveVersion,
-    isActive: site.isActive,
     livePineconePrefix:
       (
         site as unknown as {
@@ -92,6 +108,72 @@ export function SiteConfigForm({
         : true,
   });
 
+  const initialSnapshotRef = useRef<string>("");
+  const lastDirtyRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    // Build a stable snapshot of the persisted site state to compare against.
+    // We only include the fields that the form can edit.
+    const snapshot = JSON.stringify({
+      name: site.name,
+      primaryColor: site.primaryColor,
+      title: site.title,
+      greeting: site.greeting,
+      primaryUrl: site.primaryUrl ?? "",
+      logoUrl: site.logoUrl ?? "",
+      allowedDomains: site.allowedDomains.join(", "),
+      allowedTopics: site.allowedTopics.join(", "),
+      modelId: site.modelId,
+      temperature: site.temperature,
+      pineconeIndex: site.pineconeIndex ?? "",
+      pineconeNs: site.pineconeNs ?? "",
+      liveVersion: site.liveVersion,
+      livePineconePrefix: (
+        site as unknown as { livePineconePrefix?: string | null }
+      ).livePineconePrefix ?? `${site.id}-live-v-`,
+      scrapeSeedUrls: Array.isArray((site.scrapeConfig as any)?.seed_urls)
+        ? ((site.scrapeConfig as any).seed_urls as unknown[])
+            .filter((v: unknown): v is string => typeof v === "string")
+            .join("\n")
+        : site.primaryUrl
+          ? site.primaryUrl
+          : "",
+      scrapeAllowedPrefixes: Array.isArray((site.scrapeConfig as any)?.allowed_prefixes)
+        ? ((site.scrapeConfig as any).allowed_prefixes as unknown[])
+            .filter((v: unknown): v is string => typeof v === "string")
+            .join("\n")
+        : (() => {
+            try {
+              const u = new URL(site.primaryUrl || "");
+              return `${u.origin}/`;
+            } catch {
+              return "";
+            }
+          })(),
+      scrapeMaxPages:
+        typeof (site.scrapeConfig as any)?.max_pages === "number"
+          ? String((site.scrapeConfig as any).max_pages)
+          : "200",
+      scrapeDelay:
+        typeof (site.scrapeConfig as any)?.delay === "number"
+          ? String((site.scrapeConfig as any).delay)
+          : "0.5",
+      scrapeParallelWorkers:
+        typeof (site.scrapeConfig as any)?.parallel_workers === "number"
+          ? String((site.scrapeConfig as any).parallel_workers)
+          : "4",
+      scrapeUseSelenium:
+        typeof (site.scrapeConfig as any)?.use_selenium === "boolean"
+          ? Boolean((site.scrapeConfig as any).use_selenium)
+          : true,
+    });
+    initialSnapshotRef.current = snapshot;
+    // Emit initial dirty state (false)
+    window.dispatchEvent(new CustomEvent("site:dirty", { detail: { dirty: false } }));
+    lastDirtyRef.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [site.id]);
+
   const [kbAdvanced, setKbAdvanced] = useState(false);
   const [kbRunId, setKbRunId] = useState<string>("");
   const [kbStep, setKbStep] = useState<"idle" | "scrape" | "prepare" | "upload" | "done" | "error">(
@@ -101,7 +183,12 @@ export function SiteConfigForm({
   const [kbLog, setKbLog] = useState<string>("");
 
   const updateSite = api.sites.update.useMutation({
-    onSuccess: () => router.refresh(),
+    onSuccess: () => {
+      // On refresh, the server state becomes canonical, so we can clear dirty immediately.
+      window.dispatchEvent(new CustomEvent("site:dirty", { detail: { dirty: false } }));
+      lastDirtyRef.current = false;
+      router.refresh();
+    },
   });
 
   const resolvedPinecone = resolvePineconeTarget(
@@ -153,9 +240,27 @@ export function SiteConfigForm({
         use_selenium: !!form.scrapeUseSelenium,
         respect_allowed_prefixes: true,
       },
-      isActive: form.isActive,
     });
   }
+
+  // Dirty-state emitter for the setup widget.
+  useEffect(() => {
+    const dirty = JSON.stringify(form) !== initialSnapshotRef.current;
+    if (dirty !== lastDirtyRef.current) {
+      lastDirtyRef.current = dirty;
+      window.dispatchEvent(new CustomEvent("site:dirty", { detail: { dirty } }));
+    }
+  }, [form]);
+
+  // Allow the setup widget to trigger a save.
+  useEffect(() => {
+    const onRequestSave = () => {
+      save();
+    };
+    window.addEventListener("site:request-save", onRequestSave);
+    return () => window.removeEventListener("site:request-save", onRequestSave);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form]);
 
   async function kbScrape() {
     setKbError("");
@@ -254,29 +359,103 @@ export function SiteConfigForm({
     upload: kbStep === "upload" || kbStep === "done",
   };
 
+  const tabDone = useMemo(() => {
+    const branding = form.name.trim().length > 0 && form.primaryUrl.trim().length > 0;
+    const behavior = form.allowedDomains.trim().length > 0;
+    const knowledge = Boolean(site.livePineconeNs);
+    return { branding, behavior, knowledge };
+  }, [form.allowedDomains, form.name, form.primaryUrl, site.livePineconeNs]);
+
   const tabs = [
-    { id: "branding" as const, label: "Branding" },
-    { id: "behavior" as const, label: "Behavior" },
-    { id: "knowledge" as const, label: "Knowledge Base" },
+    {
+      id: "branding" as const,
+      label: "Branding",
+      icon: (
+        <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current">
+          <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm1 5v5.59l3.7 3.7-1.4 1.41L11 13V7h2z" />
+        </svg>
+      ),
+      desc: "Logo, colors, demo",
+    },
+    {
+      id: "behavior" as const,
+      label: "Behavior",
+      icon: (
+        <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current">
+          <path d="M12 1a11 11 0 1011 11A11 11 0 0012 1zm6 6h-2.35a15.7 15.7 0 00-1.1-2.44A9.07 9.07 0 0118 7zM12 3a13.4 13.4 0 011.73 4H10.27A13.4 13.4 0 0112 3zM4 13a8.9 8.9 0 010-2h3.06a16.6 16.6 0 000 2H4zm.35-6A9.07 9.07 0 018.45 4.56 15.7 15.7 0 007.35 7H4.35zM6 12a14.4 14.4 0 01.17-2h3.35a17.7 17.7 0 000 4H6.17A14.4 14.4 0 016 12zm1.35 5h-3A9.07 9.07 0 018.45 19.44 15.7 15.7 0 007.35 17zm2.92 0h3.46A13.4 13.4 0 0112 21a13.4 13.4 0 01-1.73-4zm.19-3a15.8 15.8 0 010-4h3.08a15.8 15.8 0 010 4h-3.08zM15.55 19.44A9.07 9.07 0 0119.65 17h-3a15.7 15.7 0 01-1.1 2.44zM16.83 14H18v-4h-1.17a16.6 16.6 0 010 4zM16.65 11h3.06a8.9 8.9 0 010 2h-3.06a16.6 16.6 0 000-2z" />
+        </svg>
+      ),
+      desc: "Domains, topics, model",
+    },
+    {
+      id: "knowledge" as const,
+      label: "Knowledge",
+      icon: (
+        <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current">
+          <path d="M19 2H8a2 2 0 00-2 2v14a2 2 0 002 2h11v2H7a4 4 0 01-4-4V6a4 4 0 014-4h12v2z" />
+          <path d="M10 6h10v2H10V6zm0 4h10v2H10v-2zm0 4h7v2h-7v-2z" />
+        </svg>
+      ),
+      desc: "Scrape & Pinecone",
+    },
   ];
 
   return (
     <div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
       {/* Tabs */}
-      <div className="flex border-b border-gray-200 px-2 pt-2">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
-            className={`px-4 py-2.5 text-sm font-medium rounded-t-lg transition-colors ${
-              tab === t.id
-                ? "border-b-2 border-indigo-600 text-indigo-700"
-                : "text-gray-500 hover:text-gray-700"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
+      <div className="border-b border-gray-200 px-6 py-4">
+        <div className="grid grid-cols-3 gap-2 rounded-2xl bg-gray-50 p-1.5">
+          {tabs.map((t) => {
+            const active = tab === t.id;
+            const done = tabDone[t.id];
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setTab(t.id)}
+                className={`group rounded-xl px-3 py-2.5 text-left transition-all ${
+                  active
+                    ? "bg-white shadow-sm ring-1 ring-gray-200"
+                    : "hover:bg-white/60"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`${
+                      active ? "text-indigo-600" : "text-gray-400 group-hover:text-indigo-500"
+                    }`}
+                  >
+                    {t.icon}
+                  </span>
+                  <span
+                    className={`text-sm font-semibold ${
+                      active ? "text-gray-900" : "text-gray-700"
+                    }`}
+                  >
+                    {t.label}
+                  </span>
+                  <span
+                    className={`ml-auto flex h-5 w-5 items-center justify-center rounded-full border ${
+                      done
+                        ? "border-green-200 bg-green-50 text-green-700"
+                        : "border-amber-200 bg-amber-50 text-amber-700"
+                    }`}
+                    aria-label={done ? `${t.label} configured` : `${t.label} not configured`}
+                  >
+                    {done ? (
+                      <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current">
+                        <path d="M9 16.2l-3.5-3.5L4 14.2l5 5 12-12-1.5-1.5L9 16.2z" />
+                      </svg>
+                    ) : (
+                      <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                    )}
+                  </span>
+                </div>
+                <p className="mt-0.5 text-xs text-gray-500">{t.desc}</p>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="p-6 space-y-5">
@@ -286,6 +465,16 @@ export function SiteConfigForm({
               <input
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
+                className={inputCls}
+              />
+            </Field>
+            <Field label="Primary URL" hint="Where your widget will be embedded.">
+              <input
+                value={form.primaryUrl}
+                onChange={(e) =>
+                  setForm({ ...form, primaryUrl: normalizeHttps(e.target.value) })
+                }
+                placeholder="https://client.com"
                 className={inputCls}
               />
             </Field>
@@ -373,56 +562,6 @@ export function SiteConfigForm({
                 className={`${inputCls} resize-none`}
               />
             </Field>
-
-            <Field
-              label="Demo site preview"
-              hint="Open a mock page with the widget loaded. Paste the site's primary URL to use its favicon for the launcher."
-            >
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <input
-                  value={form.primaryUrl}
-                  onChange={(e) =>
-                    setForm({ ...form, primaryUrl: e.target.value })
-                  }
-                  placeholder="https://client.com"
-                  className={`${inputCls} flex-1`}
-                />
-                <a
-                  href={`/widget-demo?siteId=${encodeURIComponent(
-                    site.id,
-                  )}&url=${encodeURIComponent(form.primaryUrl || "https://example.com")}`}
-                  target="_blank"
-                  rel="noopener"
-                  className={`inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm font-semibold text-white transition-colors ${
-                    form.primaryUrl.trim()
-                      ? "bg-gray-900 hover:bg-gray-800"
-                      : "bg-gray-300 cursor-not-allowed"
-                  }`}
-                  onClick={(e) => {
-                    if (!form.primaryUrl.trim()) e.preventDefault();
-                  }}
-                >
-                  Open demo
-                </a>
-              </div>
-              <p className="mt-2 text-xs text-gray-500">
-                Tip: upload a Logo above to override the launcher icon.
-              </p>
-            </Field>
-            <div className="flex items-center gap-2">
-              <input
-                id="isActive"
-                type="checkbox"
-                checked={form.isActive}
-                onChange={(e) =>
-                  setForm({ ...form, isActive: e.target.checked })
-                }
-                className="h-4 w-4 rounded border-gray-300 text-indigo-600"
-              />
-              <label htmlFor="isActive" className="text-sm text-gray-700">
-                Site is active
-              </label>
-            </div>
           </>
         )}
 
@@ -487,56 +626,67 @@ export function SiteConfigForm({
 
         {tab === "knowledge" && (
           <>
-            <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-4">
-              <div className="flex items-center justify-between gap-3">
+            <div className="rounded-3xl border border-gray-200 bg-white px-5 py-5 shadow-sm">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <p className="font-semibold text-gray-900">Knowledge base refresh</p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Scrape → Prepare (finetune=true) → Upload (text_source=fine). Uses the internal scraper pipeline service.
+                  <div className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-700">
+                    Knowledge base
+                    <span className="text-gray-400">•</span>
+                    Scrape → Prepare → Upload
+                  </div>
+                  <p className="mt-3 text-base font-semibold text-gray-900">
+                    Refresh your content
+                  </p>
+                  <p className="mt-1 text-sm text-gray-600">
+                    Scrape your website/docs and upload the cleaned knowledge to Pinecone.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void runKbPipeline()}
-                  disabled={kbStep === "scrape" || kbStep === "prepare" || kbStep === "upload"}
-                  className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
-                >
-                  {kbStep === "scrape" || kbStep === "prepare" || kbStep === "upload"
-                    ? "Running…"
-                    : "Run refresh"}
-                </button>
+                <div className="flex flex-col gap-2 sm:items-end">
+                  <button
+                    type="button"
+                    onClick={() => void runKbPipeline()}
+                    disabled={kbStep === "scrape" || kbStep === "prepare" || kbStep === "upload"}
+                    className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60"
+                  >
+                    {kbStep === "scrape" || kbStep === "prepare" || kbStep === "upload"
+                      ? "Refreshing…"
+                      : "Refresh knowledge base"}
+                  </button>
+                  {kbRunId ? (
+                    <p className="text-xs text-gray-500">
+                      Run: <span className="font-mono">{kbRunId}</span>
+                    </p>
+                  ) : (
+                    <p className="text-xs text-gray-500">Takes ~1–3 minutes.</p>
+                  )}
+                </div>
               </div>
 
-              <div className="mt-4 grid grid-cols-3 gap-2">
+              <div className="mt-5 grid grid-cols-3 gap-2">
                 <ProgressStep label="Scrape" active={kbStep === "scrape"} done={progress.scrape} />
                 <ProgressStep label="Prepare" active={kbStep === "prepare"} done={progress.prepare} />
                 <ProgressStep label="Upload" active={kbStep === "upload"} done={progress.upload} />
               </div>
 
-              {kbRunId ? (
-                <p className="mt-3 text-xs text-gray-600">
-                  Run ID: <span className="font-mono">{kbRunId}</span>
-                </p>
-              ) : null}
               {kbError ? (
-                <p className="mt-3 text-sm text-red-600">{kbError}</p>
+                <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {kbError}
+                </div>
               ) : null}
+
               {kbLog ? (
-                <pre className="mt-3 max-h-56 overflow-auto rounded-lg bg-white border border-gray-200 p-3 text-xs">
+                <details className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3">
+                  <summary className="cursor-pointer text-sm font-semibold text-gray-800">
+                    View run details
+                  </summary>
+                  <pre className="mt-3 max-h-64 overflow-auto rounded-xl bg-white border border-gray-200 p-3 text-xs">
 {kbLog}
-                </pre>
+                  </pre>
+                </details>
               ) : null}
             </div>
 
-            <Field label="Live prefix" hint="Editable. The pipeline will create namespaces like {prefix}1, {prefix}2, …">
-              <input
-                value={form.livePineconePrefix}
-                onChange={(e) => setForm({ ...form, livePineconePrefix: e.target.value })}
-                className={inputCls}
-              />
-            </Field>
-
-            <Field label="Scrape config (basic)" hint="One per line.">
+            <Field label="Scrape config" hint="Keep it simple: set the crawl entrypoints and limits.">
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block text-xs font-medium text-gray-600">Seed URLs</label>
@@ -569,104 +719,120 @@ export function SiteConfigForm({
                   className={inputCls}
                 />
               </Field>
-              <Field label="Delay (seconds)">
-                <input
-                  value={form.scrapeDelay}
-                  onChange={(e) => setForm({ ...form, scrapeDelay: e.target.value })}
-                  className={inputCls}
-                />
-              </Field>
-              <Field label="Parallel workers">
-                <input
-                  value={form.scrapeParallelWorkers}
-                  onChange={(e) => setForm({ ...form, scrapeParallelWorkers: e.target.value })}
-                  className={inputCls}
-                />
-              </Field>
+              <div className="sm:col-span-2">
+                <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+                  <p className="text-sm font-semibold text-gray-900">Advanced</p>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Tuning, Selenium, and Pinecone settings live here.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setKbAdvanced((v) => !v)}
+                    className="mt-3 inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                  >
+                    {kbAdvanced ? "Hide advanced" : "Show advanced"}
+                  </button>
+                </div>
+              </div>
             </div>
 
-            <Field label="Use Selenium">
-              <label className="flex items-center gap-2 text-sm text-gray-700">
-                <input
-                  type="checkbox"
-                  checked={form.scrapeUseSelenium}
-                  onChange={(e) => setForm({ ...form, scrapeUseSelenium: e.target.checked })}
-                  className="h-4 w-4 accent-indigo-600"
-                />
-                Render pages (Selenium)
-              </label>
-            </Field>
-
-            <button
-              type="button"
-              onClick={() => setKbAdvanced((v) => !v)}
-              className="text-sm font-medium text-gray-700 underline"
-            >
-              {kbAdvanced ? "Hide advanced" : "Show advanced"}
-            </button>
-
             {kbAdvanced ? (
-              <div className="rounded-xl border border-gray-200 bg-white px-4 py-4 space-y-3">
-                <p className="text-sm font-semibold text-gray-900">Advanced scrape options</p>
-                <p className="text-xs text-gray-500">
-                  For now this UI keeps advanced options minimal. We can add the full schema fields next (timeouts, depth, allow/deny patterns, etc).
-                </p>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field label="Selenium page load timeout (seconds)">
+              <>
+                <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                  <p className="text-sm font-semibold text-gray-900">Scrape tuning</p>
+                  <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                    <Field label="Delay (seconds)">
+                      <input
+                        value={form.scrapeDelay}
+                        onChange={(e) =>
+                          setForm({ ...form, scrapeDelay: e.target.value })
+                        }
+                        className={inputCls}
+                      />
+                    </Field>
+                    <Field label="Parallel workers">
+                      <input
+                        value={form.scrapeParallelWorkers}
+                        onChange={(e) =>
+                          setForm({ ...form, scrapeParallelWorkers: e.target.value })
+                        }
+                        className={inputCls}
+                      />
+                    </Field>
+                    <Field label="Use Selenium">
+                      <label className="flex items-center gap-2 text-sm text-gray-700">
+                        <input
+                          type="checkbox"
+                          checked={form.scrapeUseSelenium}
+                          onChange={(e) =>
+                            setForm({ ...form, scrapeUseSelenium: e.target.checked })
+                          }
+                          className="h-4 w-4 accent-indigo-600"
+                        />
+                        Render pages
+                      </label>
+                    </Field>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                  <p className="text-sm font-semibold text-gray-900">Upload settings</p>
+                  <Field
+                    label="Live prefix"
+                    hint="Editable. The pipeline will create namespaces like {prefix}1, {prefix}2, …"
+                  >
                     <input
-                      value={String((initialScrapeConfig.selenium_page_load_timeout as any) ?? 20)}
-                      readOnly
-                      className={`${inputCls} bg-gray-50`}
-                    />
-                  </Field>
-                  <Field label="Selenium render wait (seconds)">
-                    <input
-                      value={String((initialScrapeConfig.selenium_render_wait as any) ?? 1.0)}
-                      readOnly
-                      className={`${inputCls} bg-gray-50`}
+                      value={form.livePineconePrefix}
+                      onChange={(e) =>
+                        setForm({ ...form, livePineconePrefix: e.target.value })
+                      }
+                      className={inputCls}
                     />
                   </Field>
                 </div>
-              </div>
-            ) : null}
 
-            <Field
-              label="Pinecone index"
-              hint="Leave empty to use the default index from env."
-            >
-              <input
-                value={form.pineconeIndex}
-                onChange={(e) =>
-                  setForm({ ...form, pineconeIndex: e.target.value })
-                }
-                placeholder="roboracer (default)"
-                className={inputCls}
-              />
-            </Field>
-            <Field
-              label="Namespace override"
-              hint="Default: site-{id}. Override if you're using a custom namespace."
-            >
-              <input
-                value={form.pineconeNs}
-                onChange={(e) =>
-                  setForm({ ...form, pineconeNs: e.target.value })
-                }
-                placeholder="site-abc123"
-                className={inputCls}
-              />
-            </Field>
-            <Field label="Live version">
-              <input
-                type="number"
-                min={1}
-                value={form.liveVersion}
-                onChange={(e) =>
-                  setForm({ ...form, liveVersion: parseInt(e.target.value) })
-                }
-                className={inputCls}
-              />
-            </Field>
+                <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                  <p className="text-sm font-semibold text-gray-900">Pinecone target</p>
+                  <Field
+                    label="Pinecone index"
+                    hint="Leave empty to use the default index from env."
+                  >
+                    <input
+                      value={form.pineconeIndex}
+                      onChange={(e) =>
+                        setForm({ ...form, pineconeIndex: e.target.value })
+                      }
+                      placeholder="roboracer (default)"
+                      className={inputCls}
+                    />
+                  </Field>
+                  <Field
+                    label="Namespace override"
+                    hint="Leave empty to use the latest live namespace (recommended)."
+                  >
+                    <input
+                      value={form.pineconeNs}
+                      onChange={(e) =>
+                        setForm({ ...form, pineconeNs: e.target.value })
+                      }
+                      placeholder="my-namespace"
+                      className={inputCls}
+                    />
+                  </Field>
+                  <Field label="Live version">
+                    <input
+                      type="number"
+                      min={1}
+                      value={form.liveVersion}
+                      onChange={(e) =>
+                        setForm({ ...form, liveVersion: parseInt(e.target.value) })
+                      }
+                      className={inputCls}
+                    />
+                  </Field>
+                </div>
+              </>
+            ) : null}
             <div className="rounded-xl border border-indigo-100 bg-indigo-50/80 px-4 py-3 text-sm text-gray-800">
               <p className="font-semibold text-indigo-900">
                 Effective Pinecone target (chat + ingest)
