@@ -1,14 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export function EmbedSnippet({ siteId }: { siteId: string }) {
   const [copied, setCopied] = useState(false);
+  const [origin, setOrigin] = useState("");
 
-  const snippet = `<script>
+  useEffect(() => {
+    setOrigin(window.location.origin);
+  }, []);
+
+  const snippet = origin
+    ? `<script>
   window.ChatWidget = { siteId: "${siteId}" };
 </script>
-<script async src="${typeof window !== "undefined" ? window.location.origin : ""}/widget.js"></script>`;
+<script async src="${origin}/widget.js"></script>`
+    : "Loading…";
 
   function copy() {
     void navigator.clipboard.writeText(snippet).then(() => {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "~/server/db";
+import { env } from "~/env.js";
 
 export async function GET(req: NextRequest) {
   const siteId = req.nextUrl.searchParams.get("siteId");
@@ -14,6 +15,7 @@ export async function GET(req: NextRequest) {
       primaryColor: true,
       title: true,
       greeting: true,
+      primaryUrl: true,
       logoUrl: true,
       allowedTopics: true,
     },
@@ -23,10 +25,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Site not found" }, { status: 404 });
   }
 
-  return NextResponse.json(site, {
+  return NextResponse.json(
+    { ...site, appUrl: env.NEXTAUTH_URL },
+    {
     headers: {
       "Access-Control-Allow-Origin": "*",
       "Cache-Control": "public, max-age=60",
     },
-  });
+    }
+  );
 }

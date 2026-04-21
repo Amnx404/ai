@@ -1,6 +1,8 @@
 import { Pinecone, type RecordMetadata } from "@pinecone-database/pinecone";
 import { env } from "~/env.js";
 
+export { getNamespace, resolvePineconeTarget } from "./pinecone-resolve";
+
 let _pinecone: Pinecone | null = null;
 
 export function getPinecone() {
@@ -8,13 +10,6 @@ export function getPinecone() {
     _pinecone = new Pinecone({ apiKey: env.PINECONE_API_KEY });
   }
   return _pinecone;
-}
-
-export function getNamespace(siteId: string, liveVersion?: number) {
-  if (liveVersion && liveVersion > 0) {
-    return `site-${siteId}-live-v${liveVersion}`;
-  }
-  return `site-${siteId}`;
 }
 
 export interface RetrievedChunk {
@@ -29,18 +24,20 @@ export interface RetrievedChunk {
 export async function queryPinecone({
   indexName,
   namespace,
+  indexHostUrl,
   queryEmbedding,
   topK = 5,
   scoreThreshold = 0.5,
 }: {
   indexName: string;
   namespace: string;
+  indexHostUrl?: string;
   queryEmbedding: number[];
   topK?: number;
   scoreThreshold?: number;
 }): Promise<RetrievedChunk[]> {
   const pinecone = getPinecone();
-  const index = pinecone.index(indexName);
+  const index = pinecone.index(indexName, indexHostUrl);
 
   const result = await index.namespace(namespace).query({
     vector: queryEmbedding,
@@ -69,7 +66,20 @@ export async function upsertChunks(
     metadata: RecordMetadata;
   }>
 ) {
+  return upsertChunksToHost(indexName, namespace, vectors);
+}
+
+export async function upsertChunksToHost(
+  indexName: string,
+  namespace: string,
+  vectors: Array<{
+    id: string;
+    values: number[];
+    metadata: RecordMetadata;
+  }>,
+  indexHostUrl?: string
+) {
   const pinecone = getPinecone();
-  const index = pinecone.index(indexName);
+  const index = pinecone.index(indexName, indexHostUrl);
   await index.namespace(namespace).upsert(vectors);
 }

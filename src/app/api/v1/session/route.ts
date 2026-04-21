@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
   }
 
   const { siteId } = parsed.data;
-  const origin = req.headers.get("origin") ?? "";
+  const origin = (req.headers.get("origin") ?? "").trim();
 
   const site = await db.site.findFirst({
     where: { id: siteId, isActive: true },
@@ -34,15 +34,31 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Site not found" }, { status: 404 });
   }
 
-  // Domain allowlist check
+  // Domain allowlist check (needs a real Origin — missing on file://, curl, etc.)
   if (site.allowedDomains.length > 0) {
-    const originHost = new URL(origin.startsWith("http") ? origin : `https://${origin}`).hostname;
-    const allowed = site.allowedDomains.some((d) => {
-      const domain = d.replace(/^https?:\/\//, "").split("/")[0];
-      return originHost === domain || originHost.endsWith(`.${domain}`);
-    });
-    if (!allowed && process.env.NODE_ENV !== "development") {
-      return NextResponse.json({ error: "Domain not allowed" }, { status: 403 });
+    const opaqueOrigin = origin === "" || origin === "null";
+    if (opaqueOrigin) {
+      if (process.env.NODE_ENV !== "development") {
+        return NextResponse.json(
+          { error: "Origin header required for this site" },
+          { status: 400 },
+        );
+      }
+    } else {
+      const originUrl = origin.startsWith("http") ? origin : `https://${origin}`;
+      let originHost: string;
+      try {
+        originHost = new URL(originUrl).hostname;
+      } catch {
+        return NextResponse.json({ error: "Invalid Origin" }, { status: 400 });
+      }
+      const allowed = site.allowedDomains.some((d) => {
+        const domain = d.replace(/^https?:\/\//, "").split("/")[0];
+        return originHost === domain || originHost.endsWith(`.${domain}`);
+      });
+      if (!allowed && process.env.NODE_ENV !== "development") {
+        return NextResponse.json({ error: "Domain not allowed" }, { status: 403 });
+      }
     }
   }
 
@@ -56,14 +72,19 @@ export async function POST(req: NextRequest) {
     data: { siteId: site.id, type: "chat_start" },
   });
 
+  const allowOrigin =
+    origin && origin !== "null" ? origin : "*";
+  const corsHeaders: Record<string, string> = {
+    "Access-Control-Allow-Origin": allowOrigin,
+  };
+  // `*` cannot be combined with `Access-Control-Allow-Credentials: true`
+  if (allowOrigin !== "*") {
+    corsHeaders["Access-Control-Allow-Credentials"] = "true";
+  }
+
   return NextResponse.json(
     { token, sessionId: session.id },
-    {
-      headers: {
-        "Access-Control-Allow-Origin": origin || "*",
-        "Access-Control-Allow-Credentials": "true",
-      },
-    }
+    { headers: corsHeaders },
   );
 }
 

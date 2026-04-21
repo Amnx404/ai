@@ -49,6 +49,23 @@ export function getStyles(primaryColor: string): string {
       transition: transform 0.3s ease, opacity 0.2s ease;
     }
 
+    #launcher .launcher-logo {
+      position: absolute;
+      width: 26px;
+      height: 26px;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.9);
+      border: 1px solid rgba(255,255,255,0.55);
+      object-fit: cover;
+      box-shadow: 0 6px 14px rgba(0,0,0,0.18);
+      opacity: 1;
+      transition: opacity 0.15s ease;
+    }
+
+    #launcher.open .launcher-logo {
+      opacity: 0;
+    }
+
     #launcher .icon-close {
       position: absolute;
       opacity: 0;
@@ -70,16 +87,19 @@ export function getStyles(primaryColor: string): string {
       position: fixed;
       bottom: 96px;
       right: 24px;
-      width: 380px;
-      height: 580px;
+      width: 392px;
+      height: 600px;
       max-height: calc(100vh - 120px);
       max-width: calc(100vw - 32px);
       background: var(--bg);
+      border: 1px solid rgba(0,0,0,0.06);
       border-radius: var(--radius);
-      box-shadow: var(--shadow);
+      box-shadow: 0 24px 60px rgba(0,0,0,0.18), 0 10px 24px rgba(0,0,0,0.10);
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      min-width: 340px;
+      min-height: 460px;
       z-index: 999997;
       transform-origin: bottom right;
       transform: scale(0.85) translateY(16px);
@@ -87,6 +107,36 @@ export function getStyles(primaryColor: string): string {
       pointer-events: none;
       transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1),
                   opacity 0.2s ease;
+    }
+
+    /* Top-left resize grip */
+    #resize-grip {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      width: 18px;
+      height: 18px;
+      border: none;
+      background: transparent;
+      cursor: nwse-resize;
+      opacity: 0.75;
+      z-index: 3;
+      border-radius: 8px;
+    }
+
+    #resize-grip:hover {
+      background: rgba(255,255,255,0.14);
+      opacity: 1;
+    }
+
+    #resize-grip::before {
+      content: "";
+      position: absolute;
+      inset: 3px;
+      border-left: 2px solid rgba(255,255,255,0.85);
+      border-top: 2px solid rgba(255,255,255,0.85);
+      border-top-left-radius: 6px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.15);
     }
 
     #panel.open {
@@ -101,7 +151,12 @@ export function getStyles(primaryColor: string): string {
       align-items: center;
       gap: 10px;
       padding: 16px 18px;
-      background: var(--primary);
+      background: linear-gradient(
+        135deg,
+        color-mix(in srgb, var(--primary) 92%, #000) 0%,
+        var(--primary) 60%,
+        color-mix(in srgb, var(--primary) 88%, #fff) 100%
+      );
       color: #fff;
       flex-shrink: 0;
     }
@@ -110,14 +165,17 @@ export function getStyles(primaryColor: string): string {
       width: 36px;
       height: 36px;
       border-radius: 50%;
-      background: rgba(255,255,255,0.25);
+      background: rgba(255,255,255,0.22);
       display: flex;
       align-items: center;
       justify-content: center;
       flex-shrink: 0;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.22);
     }
 
     #header-avatar svg { width: 18px; height: 18px; fill: #fff; }
+    #header-avatar img { width: 100%; height: 100%; object-fit: cover; }
 
     #header-info { flex: 1; min-width: 0; }
 
@@ -169,6 +227,11 @@ export function getStyles(primaryColor: string): string {
       flex-direction: column;
       gap: 12px;
       scroll-behavior: smooth;
+      background: radial-gradient(
+        1200px 600px at 100% 0%,
+        rgba(99,102,241,0.08),
+        rgba(255,255,255,0)
+      );
     }
 
     #messages::-webkit-scrollbar { width: 4px; }
@@ -207,59 +270,22 @@ export function getStyles(primaryColor: string): string {
       border-bottom-left-radius: 4px;
     }
 
+    .intext-source {
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    .intext-source:hover { text-decoration: underline; }
+
     .message-time {
       font-size: 11px;
       color: var(--text-secondary);
       padding: 0 4px;
     }
 
-    /* Sources */
-    .sources {
-      margin-top: 6px;
-      padding: 8px 10px;
-      background: var(--bg-secondary);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      font-size: 12px;
-      color: var(--text-secondary);
-      max-width: 100%;
-    }
-
-    .sources-label {
-      font-weight: 600;
-      color: var(--text);
-      margin-bottom: 4px;
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-
-    .source-item {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      padding: 2px 0;
-      overflow: hidden;
-    }
-
-    .source-item a {
-      color: var(--primary);
-      text-decoration: none;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-size: 12px;
-    }
-
-    .source-item a:hover { text-decoration: underline; }
-
-    .source-dot {
-      width: 4px;
-      height: 4px;
-      border-radius: 50%;
-      background: var(--primary);
-      flex-shrink: 0;
-    }
+    /* Sources (legacy block, should no longer render) */
+    .sources { display: none; }
 
     /* Typing indicator */
     .typing {

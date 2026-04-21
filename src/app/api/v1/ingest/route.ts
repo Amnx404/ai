@@ -4,8 +4,8 @@ import { getServerSession } from "next-auth";
 
 import { authOptions } from "~/server/auth";
 import { db } from "~/server/db";
-import { embedTexts } from "~/lib/openrouter";
-import { getNamespace, upsertChunks } from "~/lib/pinecone";
+import { embedTextsForIngest } from "~/lib/pinecone-embed";
+import { resolvePineconeTarget, upsertChunksToHost } from "~/lib/pinecone";
 import { env } from "~/env.js";
 
 const bodySchema = z.object({
@@ -48,8 +48,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Site not found" }, { status: 404 });
   }
 
-  const indexName = site.pineconeIndex ?? env.PINECONE_INDEX;
-  const namespace = site.pineconeNs ?? getNamespace(site.id, site.liveVersion);
+  const { indexName, namespace, indexHostUrl } = resolvePineconeTarget(
+    site,
+    env.PINECONE_INDEX,
+    env.PINECONE_INDEX_HOST,
+  );
 
   // Embed in batches of 50
   const BATCH = 50;
@@ -57,7 +60,7 @@ export async function POST(req: NextRequest) {
 
   for (let i = 0; i < chunks.length; i += BATCH) {
     const batch = chunks.slice(i, i + BATCH);
-    const embeddings = await embedTexts(batch.map((c) => c.text));
+    const embeddings = await embedTextsForIngest(batch.map((c) => c.text));
 
     const vectors = batch.map((c, idx) => ({
       id: c.id,
@@ -71,7 +74,7 @@ export async function POST(req: NextRequest) {
       },
     }));
 
-    await upsertChunks(indexName, namespace, vectors);
+    await upsertChunksToHost(indexName, namespace, vectors, indexHostUrl);
     upserted += batch.length;
   }
 

@@ -8,6 +8,7 @@ import { api } from "~/trpc/react";
 export function CreateSiteButton() {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
+  const [primaryUrl, setPrimaryUrl] = useState("");
   const [domains, setDomains] = useState("");
   const router = useRouter();
 
@@ -15,6 +16,7 @@ export function CreateSiteButton() {
     onSuccess: (site) => {
       setOpen(false);
       setName("");
+      setPrimaryUrl("");
       setDomains("");
       router.push(`/sites/${site.id}`);
       router.refresh();
@@ -52,6 +54,22 @@ export function CreateSiteButton() {
 
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Primary URL{" "}
+                  <span className="font-normal text-gray-400">(required)</span>
+                </label>
+                <input
+                  value={primaryUrl}
+                  onChange={(e) => setPrimaryUrl(e.target.value)}
+                  placeholder="https://client.com"
+                  className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                />
+                <p className="mt-1 text-xs text-gray-400">
+                  Used for demo preview and favicon-based widget icon.
+                </p>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
                   Allowed domains{" "}
                   <span className="font-normal text-gray-400">(optional, comma-separated)</span>
                 </label>
@@ -76,13 +94,14 @@ export function CreateSiteButton() {
                   if (!name.trim()) return;
                   createSite.mutate({
                     name: name.trim(),
+                    primaryUrl: primaryUrl.trim(),
                     allowedDomains: domains
                       .split(",")
                       .map((d) => d.trim())
                       .filter(Boolean),
                   });
                 }}
-                disabled={!name.trim() || createSite.isPending}
+                disabled={!name.trim() || !primaryUrl.trim() || createSite.isPending}
                 className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60 transition-colors"
               >
                 {createSite.isPending ? "Creating…" : "Create"}

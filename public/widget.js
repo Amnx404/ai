@@ -1,9 +1,9 @@
-"use strict";(()=>{var O=Object.defineProperty;var N=(i,e,s)=>e in i?O(i,e,{enumerable:!0,configurable:!0,writable:!0,value:s}):i[e]=s;var o=(i,e,s)=>N(i,typeof e!="symbol"?e+"":e,s);function C(i){return`
+"use strict";(()=>{var O=Object.defineProperty;var U=(n,e,s)=>e in n?O(n,e,{enumerable:!0,configurable:!0,writable:!0,value:s}):n[e]=s;var c=(n,e,s)=>U(n,typeof e!="symbol"?e+"":e,s);function L(n){return`
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :host {
-      --primary: ${i};
-      --primary-dark: color-mix(in srgb, ${i} 80%, #000);
+      --primary: ${n};
+      --primary-dark: color-mix(in srgb, ${n} 80%, #000);
       --bg: #ffffff;
       --bg-secondary: #f9fafb;
       --text: #111827;
@@ -48,6 +48,23 @@
       transition: transform 0.3s ease, opacity 0.2s ease;
     }
 
+    #launcher .launcher-logo {
+      position: absolute;
+      width: 26px;
+      height: 26px;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.9);
+      border: 1px solid rgba(255,255,255,0.55);
+      object-fit: cover;
+      box-shadow: 0 6px 14px rgba(0,0,0,0.18);
+      opacity: 1;
+      transition: opacity 0.15s ease;
+    }
+
+    #launcher.open .launcher-logo {
+      opacity: 0;
+    }
+
     #launcher .icon-close {
       position: absolute;
       opacity: 0;
@@ -69,16 +86,19 @@
       position: fixed;
       bottom: 96px;
       right: 24px;
-      width: 380px;
-      height: 580px;
+      width: 392px;
+      height: 600px;
       max-height: calc(100vh - 120px);
       max-width: calc(100vw - 32px);
       background: var(--bg);
+      border: 1px solid rgba(0,0,0,0.06);
       border-radius: var(--radius);
-      box-shadow: var(--shadow);
+      box-shadow: 0 24px 60px rgba(0,0,0,0.18), 0 10px 24px rgba(0,0,0,0.10);
       display: flex;
       flex-direction: column;
       overflow: hidden;
+      min-width: 340px;
+      min-height: 460px;
       z-index: 999997;
       transform-origin: bottom right;
       transform: scale(0.85) translateY(16px);
@@ -86,6 +106,36 @@
       pointer-events: none;
       transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1),
                   opacity 0.2s ease;
+    }
+
+    /* Top-left resize grip */
+    #resize-grip {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      width: 18px;
+      height: 18px;
+      border: none;
+      background: transparent;
+      cursor: nwse-resize;
+      opacity: 0.75;
+      z-index: 3;
+      border-radius: 8px;
+    }
+
+    #resize-grip:hover {
+      background: rgba(255,255,255,0.14);
+      opacity: 1;
+    }
+
+    #resize-grip::before {
+      content: "";
+      position: absolute;
+      inset: 3px;
+      border-left: 2px solid rgba(255,255,255,0.85);
+      border-top: 2px solid rgba(255,255,255,0.85);
+      border-top-left-radius: 6px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.15);
     }
 
     #panel.open {
@@ -100,7 +150,12 @@
       align-items: center;
       gap: 10px;
       padding: 16px 18px;
-      background: var(--primary);
+      background: linear-gradient(
+        135deg,
+        color-mix(in srgb, var(--primary) 92%, #000) 0%,
+        var(--primary) 60%,
+        color-mix(in srgb, var(--primary) 88%, #fff) 100%
+      );
       color: #fff;
       flex-shrink: 0;
     }
@@ -109,14 +164,17 @@
       width: 36px;
       height: 36px;
       border-radius: 50%;
-      background: rgba(255,255,255,0.25);
+      background: rgba(255,255,255,0.22);
       display: flex;
       align-items: center;
       justify-content: center;
       flex-shrink: 0;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.22);
     }
 
     #header-avatar svg { width: 18px; height: 18px; fill: #fff; }
+    #header-avatar img { width: 100%; height: 100%; object-fit: cover; }
 
     #header-info { flex: 1; min-width: 0; }
 
@@ -168,6 +226,11 @@
       flex-direction: column;
       gap: 12px;
       scroll-behavior: smooth;
+      background: radial-gradient(
+        1200px 600px at 100% 0%,
+        rgba(99,102,241,0.08),
+        rgba(255,255,255,0)
+      );
     }
 
     #messages::-webkit-scrollbar { width: 4px; }
@@ -206,59 +269,22 @@
       border-bottom-left-radius: 4px;
     }
 
+    .intext-source {
+      color: var(--primary);
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    .intext-source:hover { text-decoration: underline; }
+
     .message-time {
       font-size: 11px;
       color: var(--text-secondary);
       padding: 0 4px;
     }
 
-    /* Sources */
-    .sources {
-      margin-top: 6px;
-      padding: 8px 10px;
-      background: var(--bg-secondary);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      font-size: 12px;
-      color: var(--text-secondary);
-      max-width: 100%;
-    }
-
-    .sources-label {
-      font-weight: 600;
-      color: var(--text);
-      margin-bottom: 4px;
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-
-    .source-item {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      padding: 2px 0;
-      overflow: hidden;
-    }
-
-    .source-item a {
-      color: var(--primary);
-      text-decoration: none;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-size: 12px;
-    }
-
-    .source-item a:hover { text-decoration: underline; }
-
-    .source-dot {
-      width: 4px;
-      height: 4px;
-      border-radius: 50%;
-      background: var(--primary);
-      flex-shrink: 0;
-    }
+    /* Sources (legacy block, should no longer render) */
+    .sources { display: none; }
 
     /* Typing indicator */
     .typing {
@@ -384,10 +410,11 @@
         right: 16px;
       }
     }
-  `}var L="rr_chat_session",H="rr_chat_messages";function j(i){var s,t;let e=document.querySelectorAll("script[src*='widget.js']");for(let r of e)try{return new URL(r.src).origin}catch(n){}return(t=(s=window.ChatWidget)==null?void 0:s.apiBase)!=null?t:""}function y(i){return new Date(i).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}function d(i){return i.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}var b=class{constructor(e){o(this,"shadow");o(this,"host");o(this,"config",null);o(this,"messages",[]);o(this,"siteId");o(this,"baseUrl");o(this,"sessionId",null);o(this,"token",null);o(this,"isOpen",!1);o(this,"isStreaming",!1);this.siteId=e,this.baseUrl=j(e),this.host=document.createElement("div"),this.host.id="rr-chat-widget",this.host.style.cssText="position:fixed;z-index:999999;",document.body.appendChild(this.host),this.shadow=this.host.attachShadow({mode:"closed"}),this.init()}async init(){try{let t=await fetch(`${this.baseUrl}/api/v1/widget-config?siteId=${this.siteId}`);if(!t.ok)return;this.config=await t.json()}catch(t){this.config={id:this.siteId,primaryColor:"#6366f1",title:"Chat",greeting:"Hi! How can I help you today?",allowedTopics:[]}}let e=sessionStorage.getItem(`${L}:${this.siteId}`);if(e)try{let{sessionId:t,token:r}=JSON.parse(e);this.sessionId=t,this.token=r}catch(t){}let s=sessionStorage.getItem(`${H}:${this.siteId}`);if(s)try{this.messages=JSON.parse(s)}catch(t){}this.render(),this.attachListeners()}saveSession(){this.sessionId&&this.token&&sessionStorage.setItem(`${L}:${this.siteId}`,JSON.stringify({sessionId:this.sessionId,token:this.token})),sessionStorage.setItem(`${H}:${this.siteId}`,JSON.stringify(this.messages))}render(){var s,t,r,n;let e=(t=(s=this.config)==null?void 0:s.primaryColor)!=null?t:"#6366f1";this.shadow.innerHTML=`
-      <style>${C(e)}</style>
+  `}var $="rr_chat_session",C="rr_chat_messages";function W(n){var s,t;let e=document.querySelectorAll("script[src*='widget.js']");for(let i of e)try{return new URL(i.src).origin}catch(a){}return(t=(s=window.ChatWidget)==null?void 0:s.apiBase)!=null?t:""}function T(n){return new Date(n).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}function g(n){return n.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}function N(n){var i;let e=n.trim().replace(/\s+/g," "),t=((i=e.split("|").map(a=>a.trim()).filter(Boolean)[0])!=null?i:e)||"Source";return t.length>32?`${t.slice(0,29)}\u2026`:t}function j(n){return n.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}function H(n,e){let s=g(n);if(!(e!=null&&e.length))return s;let t=s;for(let i of e.slice(0,5)){if(!(i!=null&&i.url))continue;let a=N(i.title||i.url||"Source"),l=g(a),r=new RegExp(`\\b${j(l)}\\b`,"i");r.test(t)&&(t=t.replace(r,`<a class="intext-source" href="${g(i.url)}" target="_blank" rel="noopener">${l}</a>`))}return t}var S=class{constructor(e){c(this,"shadow");c(this,"host");c(this,"config",null);c(this,"messages",[]);c(this,"siteId");c(this,"baseUrl");c(this,"sessionId",null);c(this,"token",null);c(this,"isOpen",!1);c(this,"isStreaming",!1);this.siteId=e,this.baseUrl=W(e),this.host=document.createElement("div"),this.host.id="rr-chat-widget",this.host.style.cssText="position:fixed;z-index:999999;",document.body.appendChild(this.host),this.shadow=this.host.attachShadow({mode:"closed"}),this.init()}async init(){try{let t=await fetch(`${this.baseUrl}/api/v1/widget-config?siteId=${this.siteId}`);if(!t.ok)return;this.config=await t.json()}catch(t){this.config={id:this.siteId,primaryColor:"#6366f1",title:"Chat",greeting:"Hi! How can I help you today?",allowedTopics:[]}}let e=sessionStorage.getItem(`${$}:${this.siteId}`);if(e)try{let{sessionId:t,token:i}=JSON.parse(e);this.sessionId=t,this.token=i}catch(t){}let s=sessionStorage.getItem(`${C}:${this.siteId}`);if(s)try{this.messages=JSON.parse(s)}catch(t){}this.render(),this.attachListeners()}saveSession(){this.sessionId&&this.token&&sessionStorage.setItem(`${$}:${this.siteId}`,JSON.stringify({sessionId:this.sessionId,token:this.token})),sessionStorage.setItem(`${C}:${this.siteId}`,JSON.stringify(this.messages))}render(){var t,i,a,l,r,o,d,h,u,m,b;let e=(i=(t=this.config)==null?void 0:t.primaryColor)!=null?i:"#6366f1",s=(o=(r=(a=this.config)==null?void 0:a.logoUrl)!=null?r:(l=window.ChatWidget)==null?void 0:l.pageIconUrl)!=null?o:null;this.shadow.innerHTML=`
+      <style>${L(e)}</style>
 
       <button id="launcher" aria-label="Open chat" title="Open chat">
+        ${s?`<img class="launcher-logo" alt="" src="${g(s)}" onerror="this.remove()" />`:""}
         <svg class="icon-chat" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
           <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/>
         </svg>
@@ -397,14 +424,16 @@
       </button>
 
       <div id="panel" role="dialog" aria-label="Chat window">
+        <button id="resize-grip" aria-label="Resize chat window" title="Resize"></button>
         <div id="header">
           <div id="header-avatar">
-            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <svg class="header-default-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
               <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
             </svg>
+            ${(d=this.config)!=null&&d.logoUrl?`<img alt="Logo" src="${g(this.config.logoUrl)}" onerror="this.remove()" />`:""}
           </div>
           <div id="header-info">
-            <div id="header-title">${d((n=(r=this.config)==null?void 0:r.title)!=null?n:"Chat")}</div>
+            <div id="header-title">${g((u=(h=this.config)==null?void 0:h.title)!=null?u:"Chat")}</div>
             <div id="header-status">
               <span id="status-dot"></span>
               <span>Online</span>
@@ -420,7 +449,7 @@
 
         <div id="messages" aria-live="polite" aria-atomic="false">
           ${this.renderGreeting()}
-          ${this.messages.map(p=>this.renderMessage(p)).join("")}
+          ${this.messages.map(f=>this.renderMessage(f)).join("")}
         </div>
 
         <div id="input-area">
@@ -439,29 +468,18 @@
         </div>
 
         <div id="powered-by">
-          Powered by <a href="https://roboracer.ai" target="_blank" rel="noopener">RoboRacer</a>
+          <a href="${g((b=(m=this.config)==null?void 0:m.appUrl)!=null?b:this.baseUrl)}" target="_blank" rel="noopener">
+            Powered by Gemini
+          </a>
         </div>
       </div>
-    `}renderGreeting(){var e;return!((e=this.config)!=null&&e.greeting)||this.messages.length>0?"":`<div id="greeting">${d(this.config.greeting)}</div>`}renderMessage(e){let s=e.sources&&e.sources.length>0?`<div class="sources">
-            <div class="sources-label">Sources</div>
-            ${e.sources.map(t=>`<div class="source-item">
-                    <span class="source-dot"></span>
-                    ${t.url?`<a href="${d(t.url)}" target="_blank" rel="noopener">${d(t.title)}</a>`:`<span>${d(t.title)}</span>`}
-                  </div>`).join("")}
-          </div>`:"";return`
+    `}renderGreeting(){var e;return!((e=this.config)!=null&&e.greeting)||this.messages.length>0?"":`<div id="greeting">${g(this.config.greeting)}</div>`}renderMessage(e){return`
       <div class="message ${e.role}">
-        <div class="bubble">${d(e.content)}</div>
-        ${s}
-        <div class="message-time">${y(e.ts)}</div>
+        <div class="bubble">${e.role==="assistant"?H(e.content,e.sources):g(e.content)}</div>
+        <div class="message-time">${T(e.ts)}</div>
       </div>
     `}appendMessageToDOM(e,s){let t=document.createElement("div");t.className=`message ${e.role}`,s&&(t.id=s),t.innerHTML=`
-      <div class="bubble">${d(e.content)}</div>
-      <div class="message-time">${y(e.ts)}</div>
-    `;let r=this.shadow.getElementById("messages");return r==null||r.appendChild(t),this.scrollToBottom(),t}showTyping(){var s;let e=document.createElement("div");return e.className="message assistant",e.id="typing-indicator",e.innerHTML='<div class="typing"><span></span><span></span><span></span></div>',(s=this.shadow.getElementById("messages"))==null||s.appendChild(e),this.scrollToBottom(),e}scrollToBottom(){let e=this.shadow.getElementById("messages");e&&(e.scrollTop=e.scrollHeight)}attachListeners(){let e=this.shadow.getElementById("launcher"),s=this.shadow.getElementById("close-btn"),t=this.shadow.getElementById("input"),r=this.shadow.getElementById("send-btn");e.addEventListener("click",()=>this.toggle()),s.addEventListener("click",()=>this.close()),t.addEventListener("keydown",n=>{n.key==="Enter"&&!n.shiftKey&&(n.preventDefault(),this.sendMessage())}),t.addEventListener("input",()=>{t.style.height="auto",t.style.height=`${Math.min(t.scrollHeight,120)}px`}),r.addEventListener("click",()=>void this.sendMessage())}toggle(){this.isOpen?this.close():this.open()}open(){var e,s;this.isOpen=!0,(e=this.shadow.getElementById("launcher"))==null||e.classList.add("open"),(s=this.shadow.getElementById("panel"))==null||s.classList.add("open"),setTimeout(()=>{var t;(t=this.shadow.getElementById("input"))==null||t.focus()},250),this.scrollToBottom()}close(){var e,s;this.isOpen=!1,(e=this.shadow.getElementById("launcher"))==null||e.classList.remove("open"),(s=this.shadow.getElementById("panel"))==null||s.classList.remove("open")}async ensureSession(){if(!(this.sessionId&&this.token))try{let e=await fetch(`${this.baseUrl}/api/v1/session`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({siteId:this.siteId})});if(e.ok){let s=await e.json();this.sessionId=s.sessionId,this.token=s.token,this.saveSession()}}catch(e){}}async sendMessage(){var w,k,E,I,M,S;if(this.isStreaming)return;let e=this.shadow.getElementById("input"),s=this.shadow.getElementById("send-btn"),t=e.value.trim();if(!t)return;e.value="",e.style.height="auto",(w=this.shadow.getElementById("greeting"))==null||w.remove();let r={role:"user",content:t,ts:Date.now()};this.messages.push(r),this.appendMessageToDOM(r),this.isStreaming=!0,s.disabled=!0,await this.ensureSession();let n=this.showTyping(),p="",u={role:"assistant",content:"",ts:Date.now()},a=null,l=null;try{let c=await fetch(`${this.baseUrl}/api/v1/chat`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({siteId:this.siteId,messages:this.messages.slice(-10).map(({role:x,content:v})=>({role:x,content:v})),sessionId:this.sessionId,token:this.token,stream:!0})});if(!c.ok||!c.body)throw new Error("Network error");let m=c.body.getReader(),h=new TextDecoder,f="";for(n.remove(),a=document.createElement("div"),a.className="message assistant",l=document.createElement("div"),l.className="bubble",a.appendChild(l),(k=this.shadow.getElementById("messages"))==null||k.appendChild(a);;){let{done:x,value:v}=await m.read();if(x)break;f+=h.decode(v,{stream:!0});let T=f.split(`
-`);f=(E=T.pop())!=null?E:"";for(let B of T){if(!B.startsWith("data: "))continue;let $=B.slice(6).trim();if($!=="[DONE]")try{let g=JSON.parse($);g.type==="token"&&g.content?(p+=g.content,l.textContent=p,this.scrollToBottom()):g.type==="sources"&&g.sources&&(u.sources=g.sources)}catch(g){}}}}catch(c){n.remove(),p="Sorry, I couldn't connect. Please try again.",a||(a=document.createElement("div"),a.className="message assistant",l=document.createElement("div"),l.className="bubble",a.appendChild(l),(I=this.shadow.getElementById("messages"))==null||I.appendChild(a)),l&&(l.textContent=p)}finally{if(a){if((M=u.sources)!=null&&M.length){let m=document.createElement("div");m.className="sources",m.innerHTML=`
-            <div class="sources-label">Sources</div>
-            ${u.sources.map(h=>`<div class="source-item">
-                    <span class="source-dot"></span>
-                    ${h.url?`<a href="${d(h.url)}" target="_blank" rel="noopener">${d(h.title)}</a>`:`<span>${d(h.title)}</span>`}
-                  </div>`).join("")}
-          `,a.appendChild(m)}let c=document.createElement("div");c.className="message-time",c.textContent=y(Date.now()),a.appendChild(c)}u.content=p,this.messages.push(u),this.saveSession(),this.scrollToBottom(),this.isStreaming=!1,s.disabled=!1,(S=this.shadow.getElementById("input"))==null||S.focus()}}};function z(){let i=window.ChatWidget;if(!(i!=null&&i.siteId)){console.warn("[RoboRacer] window.ChatWidget.siteId is required");return}new b(i.siteId)}document.readyState==="loading"?document.addEventListener("DOMContentLoaded",z):z();})();
+      <div class="bubble">${g(e.content)}</div>
+      <div class="message-time">${T(e.ts)}</div>
+    `;let i=this.shadow.getElementById("messages");return i==null||i.appendChild(t),this.scrollToBottom(),t}showTyping(){var s;let e=document.createElement("div");return e.className="message assistant",e.id="typing-indicator",e.innerHTML='<div class="typing"><span></span><span></span><span></span></div>',(s=this.shadow.getElementById("messages"))==null||s.appendChild(e),this.scrollToBottom(),e}scrollToBottom(){let e=this.shadow.getElementById("messages");e&&(e.scrollTop=e.scrollHeight)}attachListeners(){let e=this.shadow.getElementById("launcher"),s=this.shadow.getElementById("close-btn"),t=this.shadow.getElementById("panel"),i=this.shadow.getElementById("resize-grip"),a=this.shadow.getElementById("input"),l=this.shadow.getElementById("send-btn");e.addEventListener("click",()=>this.toggle()),s.addEventListener("click",()=>this.close()),a.addEventListener("keydown",r=>{r.key==="Enter"&&!r.shiftKey&&(r.preventDefault(),this.sendMessage())}),a.addEventListener("input",()=>{a.style.height="auto",a.style.height=`${Math.min(a.scrollHeight,120)}px`}),l.addEventListener("click",()=>void this.sendMessage()),i&&i.addEventListener("pointerdown",r=>{r.preventDefault(),i.setPointerCapture(r.pointerId);let o=t.getBoundingClientRect().width,d=t.getBoundingClientRect().height,h=r.clientX,u=r.clientY,m=340,b=460,f=Math.min(window.innerWidth-32,720),p=Math.min(window.innerHeight-120,900),k=v=>{let y=v.clientX-h,w=v.clientY-u,I=Math.max(m,Math.min(f,o-y)),M=Math.max(b,Math.min(p,d-w));t.style.width=`${Math.round(I)}px`,t.style.height=`${Math.round(M)}px`},E=()=>{window.removeEventListener("pointermove",k),window.removeEventListener("pointerup",E)};window.addEventListener("pointermove",k),window.addEventListener("pointerup",E,{once:!0})})}toggle(){this.isOpen?this.close():this.open()}open(){var e,s;this.isOpen=!0,(e=this.shadow.getElementById("launcher"))==null||e.classList.add("open"),(s=this.shadow.getElementById("panel"))==null||s.classList.add("open"),setTimeout(()=>{var t;(t=this.shadow.getElementById("input"))==null||t.focus()},250),this.scrollToBottom()}close(){var e,s;this.isOpen=!1,(e=this.shadow.getElementById("launcher"))==null||e.classList.remove("open"),(s=this.shadow.getElementById("panel"))==null||s.classList.remove("open")}async ensureSession(){if(!(this.sessionId&&this.token))try{let e=await fetch(`${this.baseUrl}/api/v1/session`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({siteId:this.siteId})});if(e.ok){let s=await e.json();this.sessionId=s.sessionId,this.token=s.token,this.saveSession()}}catch(e){}}async sendMessage(){var h,u,m,b,f;if(this.isStreaming)return;let e=this.shadow.getElementById("input"),s=this.shadow.getElementById("send-btn"),t=e.value.trim();if(!t)return;e.value="",e.style.height="auto",(h=this.shadow.getElementById("greeting"))==null||h.remove();let i={role:"user",content:t,ts:Date.now()};this.messages.push(i),this.appendMessageToDOM(i),this.isStreaming=!0,s.disabled=!0,await this.ensureSession();let a=this.showTyping(),l="",r={role:"assistant",content:"",ts:Date.now()},o=null,d=null;try{let p=await fetch(`${this.baseUrl}/api/v1/chat`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({siteId:this.siteId,messages:this.messages.slice(-10).map(({role:y,content:w})=>({role:y,content:w})),sessionId:this.sessionId,token:this.token,stream:!0})});if(!p.ok||!p.body)throw new Error("Network error");let k=p.body.getReader(),E=new TextDecoder,v="";for(a.remove(),o=document.createElement("div"),o.className="message assistant",d=document.createElement("div"),d.className="bubble",o.appendChild(d),(u=this.shadow.getElementById("messages"))==null||u.appendChild(o);;){let{done:y,value:w}=await k.read();if(y)break;v+=E.decode(w,{stream:!0});let I=v.split(`
+`);v=(m=I.pop())!=null?m:"";for(let M of I){if(!M.startsWith("data: "))continue;let B=M.slice(6).trim();if(B!=="[DONE]")try{let x=JSON.parse(B);x.type==="token"&&x.content?(l+=x.content,d.textContent=l,this.scrollToBottom()):x.type==="sources"&&x.sources&&(r.sources=x.sources)}catch(x){}}}}catch(p){a.remove(),l="Sorry, I couldn't connect. Please try again.",o||(o=document.createElement("div"),o.className="message assistant",d=document.createElement("div"),d.className="bubble",o.appendChild(d),(b=this.shadow.getElementById("messages"))==null||b.appendChild(o)),d&&(d.textContent=l)}finally{if(o){d&&(d.innerHTML=H(l,r.sources));let p=document.createElement("div");p.className="message-time",p.textContent=T(Date.now()),o.appendChild(p)}r.content=l,this.messages.push(r),this.saveSession(),this.scrollToBottom(),this.isStreaming=!1,s.disabled=!1,(f=this.shadow.getElementById("input"))==null||f.focus()}}};function z(){let n=window.ChatWidget;if(!(n!=null&&n.siteId)){console.warn("[Alter Ego] window.ChatWidget.siteId is required");return}new S(n.siteId)}document.readyState==="loading"?document.addEventListener("DOMContentLoaded",z):z();})();

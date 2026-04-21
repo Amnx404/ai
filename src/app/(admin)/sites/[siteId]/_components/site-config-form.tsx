@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { type Site } from "@prisma/client";
 
+import { resolvePineconeTarget } from "~/lib/pinecone-resolve";
 import { api } from "~/trpc/react";
 
 const MODELS = [
@@ -15,7 +16,15 @@ const MODELS = [
   { id: "meta-llama/llama-3.3-70b-instruct", label: "Llama 3.3 70B" },
 ];
 
-export function SiteConfigForm({ site }: { site: Site }) {
+export function SiteConfigForm({
+  site,
+  defaultPineconeIndex,
+  defaultPineconeIndexHost,
+}: {
+  site: Site;
+  defaultPineconeIndex: string;
+  defaultPineconeIndexHost: string;
+}) {
   const router = useRouter();
   const [tab, setTab] = useState<"branding" | "behavior" | "knowledge">(
     "branding"
@@ -26,6 +35,8 @@ export function SiteConfigForm({ site }: { site: Site }) {
     primaryColor: site.primaryColor,
     title: site.title,
     greeting: site.greeting,
+    primaryUrl: site.primaryUrl ?? "",
+    logoUrl: site.logoUrl ?? "",
     allowedDomains: site.allowedDomains.join(", "),
     allowedTopics: site.allowedTopics.join(", "),
     modelId: site.modelId,
@@ -40,6 +51,17 @@ export function SiteConfigForm({ site }: { site: Site }) {
     onSuccess: () => router.refresh(),
   });
 
+  const resolvedPinecone = resolvePineconeTarget(
+    {
+      id: site.id,
+      liveVersion: form.liveVersion,
+      pineconeIndex: form.pineconeIndex || null,
+      pineconeNs: form.pineconeNs || null,
+    },
+    defaultPineconeIndex,
+    defaultPineconeIndexHost || undefined,
+  );
+
   function save() {
     updateSite.mutate({
       id: site.id,
@@ -47,6 +69,8 @@ export function SiteConfigForm({ site }: { site: Site }) {
       primaryColor: form.primaryColor,
       title: form.title,
       greeting: form.greeting,
+      primaryUrl: form.primaryUrl.trim(),
+      logoUrl: form.logoUrl.trim() ? form.logoUrl.trim() : null,
       allowedDomains: form.allowedDomains
         .split(",")
         .map((d) => d.trim())
@@ -128,6 +152,51 @@ export function SiteConfigForm({ site }: { site: Site }) {
                 />
               </Field>
             </div>
+            <Field
+              label="Logo"
+              hint="Upload a logo (stored in Postgres as base64). Optional."
+            >
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-xl border border-gray-200 bg-white flex items-center justify-center overflow-hidden">
+                  {form.logoUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={form.logoUrl}
+                      alt="Logo preview"
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="text-xs text-gray-400">logo</div>
+                  )}
+                </div>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      const result = reader.result;
+                      if (typeof result === "string") {
+                        setForm({ ...form, logoUrl: result });
+                      }
+                    };
+                    reader.readAsDataURL(file);
+                  }}
+                  className="block text-sm text-gray-700"
+                />
+                {form.logoUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, logoUrl: "" })}
+                    className="text-sm font-medium text-gray-700 underline"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            </Field>
             <Field label="Greeting message">
               <textarea
                 value={form.greeting}
@@ -137,6 +206,42 @@ export function SiteConfigForm({ site }: { site: Site }) {
                 rows={3}
                 className={`${inputCls} resize-none`}
               />
+            </Field>
+
+            <Field
+              label="Demo site preview"
+              hint="Open a mock page with the widget loaded. Paste the site's primary URL to use its favicon for the launcher."
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <input
+                  value={form.primaryUrl}
+                  onChange={(e) =>
+                    setForm({ ...form, primaryUrl: e.target.value })
+                  }
+                  placeholder="https://client.com"
+                  className={`${inputCls} flex-1`}
+                />
+                <a
+                  href={`/widget-demo?siteId=${encodeURIComponent(
+                    site.id,
+                  )}&url=${encodeURIComponent(form.primaryUrl || "https://example.com")}`}
+                  target="_blank"
+                  rel="noopener"
+                  className={`inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm font-semibold text-white transition-colors ${
+                    form.primaryUrl.trim()
+                      ? "bg-gray-900 hover:bg-gray-800"
+                      : "bg-gray-300 cursor-not-allowed"
+                  }`}
+                  onClick={(e) => {
+                    if (!form.primaryUrl.trim()) e.preventDefault();
+                  }}
+                >
+                  Open demo
+                </a>
+              </div>
+              <p className="mt-2 text-xs text-gray-500">
+                Tip: upload a Logo above to override the launcher icon.
+              </p>
             </Field>
             <div className="flex items-center gap-2">
               <input
@@ -253,6 +358,43 @@ export function SiteConfigForm({ site }: { site: Site }) {
                 className={inputCls}
               />
             </Field>
+            <div className="rounded-xl border border-indigo-100 bg-indigo-50/80 px-4 py-3 text-sm text-gray-800">
+              <p className="font-semibold text-indigo-900">
+                Effective Pinecone target (chat + ingest)
+              </p>
+              <p className="mt-2 font-mono text-xs break-all">
+                <span className="text-gray-500">index:</span>{" "}
+                {resolvedPinecone.indexName}
+                <span className="ml-2 text-gray-400">
+                  ({resolvedPinecone.indexSource === "env" ? "from env" : "site override"})
+                </span>
+              </p>
+              {resolvedPinecone.indexHostUrl ? (
+                <p className="mt-1 font-mono text-xs break-all">
+                  <span className="text-gray-500">host:</span>{" "}
+                  {resolvedPinecone.indexHostUrl}
+                  <span className="ml-2 text-gray-400">(from env)</span>
+                </p>
+              ) : (
+                <p className="mt-1 font-mono text-xs break-all">
+                  <span className="text-gray-500">host:</span>{" "}
+                  <span className="text-gray-400">
+                    (auto-resolved by Pinecone SDK)
+                  </span>
+                </p>
+              )}
+              <p className="mt-1 font-mono text-xs break-all">
+                <span className="text-gray-500">namespace:</span>{" "}
+                {resolvedPinecone.namespace}
+                <span className="ml-2 text-gray-400">
+                  (
+                  {resolvedPinecone.namespaceSource === "derived"
+                    ? `derived from site id + live v${form.liveVersion}`
+                    : "site override"}
+                  )
+                </span>
+              </p>
+            </div>
           </>
         )}
       </div>

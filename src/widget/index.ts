@@ -3,7 +3,7 @@ import { ChatWidget } from "./widget";
 function init() {
   const config = (window as { ChatWidget?: { siteId?: string } }).ChatWidget;
   if (!config?.siteId) {
-    console.warn("[RoboRacer] window.ChatWidget.siteId is required");
+    console.warn("[Alter Ego] window.ChatWidget.siteId is required");
     return;
   }
   new ChatWidget(config.siteId);

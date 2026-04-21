@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { getServerSession } from "next-auth";
 
+import { env } from "~/env.js";
 import { authOptions } from "~/server/auth";
 import { db } from "~/server/db";
 import { SiteConfigForm } from "./_components/site-config-form";
@@ -60,7 +61,11 @@ export default async function SiteDetailPage({
 
         {/* Config form */}
         <div className="lg:col-span-2">
-          <SiteConfigForm site={site} />
+          <SiteConfigForm
+            site={site}
+            defaultPineconeIndex={env.PINECONE_INDEX}
+            defaultPineconeIndexHost={env.PINECONE_INDEX_HOST ?? ""}
+          />
         </div>
       </div>
 

@@ -6,7 +6,7 @@ import { TRPCReactProvider } from "~/trpc/react";
 import { SessionProvider } from "~/components/session-provider";
 
 export const metadata: Metadata = {
-  title: "RoboRacer — Chat Widget Platform",
+  title: "Alter Ego — Chat Widget Platform",
   description: "Embeddable AI chat widget powered by your content",
   icons: [{ rel: "icon", url: "/favicon.ico" }],
 };

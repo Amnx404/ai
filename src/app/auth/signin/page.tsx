@@ -38,7 +38,7 @@ export default function SignInPage() {
               <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z" />
             </svg>
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">Sign in to RoboRacer</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Sign in to Alter Ego</h1>
           <p className="mt-1 text-sm text-gray-500">
             We&apos;ll send a magic link to your email
           </p>

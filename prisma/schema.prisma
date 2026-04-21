@@ -78,6 +78,9 @@ model Site {
   primaryColor   String       @default("#6366f1")
   title          String       @default("Chat")
   greeting       String       @default("Hi! How can I help you today?")
+  // The primary URL of the customer site this widget is embedded on.
+  // Used for demo preview and favicon-based launcher icon fallback.
+  primaryUrl     String       @default("")
   logoUrl        String?
   // Security
   allowedDomains String[]

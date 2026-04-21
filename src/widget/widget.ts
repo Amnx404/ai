@@ -5,8 +5,10 @@ interface WidgetConfig {
   primaryColor: string;
   title: string;
   greeting: string;
+  primaryUrl?: string;
   logoUrl?: string | null;
   allowedTopics: string[];
+  appUrl?: string;
 }
 
 interface Message {
@@ -19,6 +21,7 @@ interface Message {
 interface ChatWidgetGlobal {
   siteId: string;
   apiBase?: string;
+  pageIconUrl?: string;
 }
 
 declare global {
@@ -51,6 +54,41 @@ function escapeHtml(str: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function shortSourceLabel(title: string): string {
+  const t = title.trim().replace(/\s+/g, " ");
+  const parts = t.split("|").map((p) => p.trim()).filter(Boolean);
+  const base = (parts[0] ?? t) || "Source";
+  return base.length > 32 ? `${base.slice(0, 29)}…` : base;
+}
+
+function escapeRegExp(str: string) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function linkSourcesInText(
+  plainText: string,
+  sources: Array<{ title: string; url: string; score: number }> | undefined
+): string {
+  const safe = escapeHtml(plainText);
+  if (!sources?.length) return safe;
+
+  // Link up to 5 sources that were actually mentioned (server filters).
+  let html = safe;
+  for (const s of sources.slice(0, 5)) {
+    if (!s?.url) continue;
+    const label = shortSourceLabel(s.title || s.url || "Source");
+    const escapedLabel = escapeHtml(label);
+    // Replace first occurrence only, case-insensitive.
+    const re = new RegExp(`\\b${escapeRegExp(escapedLabel)}\\b`, "i");
+    if (!re.test(html)) continue;
+    html = html.replace(
+      re,
+      `<a class="intext-source" href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escapedLabel}</a>`
+    );
+  }
+  return html;
 }
 
 export class ChatWidget {
@@ -129,10 +167,17 @@ export class ChatWidget {
 
   private render() {
     const color = this.config?.primaryColor ?? "#6366f1";
+    const launcherIcon =
+      this.config?.logoUrl ?? window.ChatWidget?.pageIconUrl ?? null;
     this.shadow.innerHTML = `
       <style>${getStyles(color)}</style>
 
       <button id="launcher" aria-label="Open chat" title="Open chat">
+        ${
+          launcherIcon
+            ? `<img class="launcher-logo" alt="" src="${escapeHtml(launcherIcon)}" onerror="this.remove()" />`
+            : ""
+        }
         <svg class="icon-chat" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
           <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/>
         </svg>
@@ -142,11 +187,17 @@ export class ChatWidget {
       </button>
 
       <div id="panel" role="dialog" aria-label="Chat window">
+        <button id="resize-grip" aria-label="Resize chat window" title="Resize"></button>
         <div id="header">
           <div id="header-avatar">
-            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <svg class="header-default-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
               <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
             </svg>
+            ${
+              this.config?.logoUrl
+                ? `<img alt="Logo" src="${escapeHtml(this.config.logoUrl)}" onerror="this.remove()" />`
+                : ""
+            }
           </div>
           <div id="header-info">
             <div id="header-title">${escapeHtml(this.config?.title ?? "Chat")}</div>
@@ -184,7 +235,9 @@ export class ChatWidget {
         </div>
 
         <div id="powered-by">
-          Powered by <a href="https://roboracer.ai" target="_blank" rel="noopener">RoboRacer</a>
+          <a href="${escapeHtml(this.config?.appUrl ?? this.baseUrl)}" target="_blank" rel="noopener">
+            Powered by Gemini
+          </a>
         </div>
       </div>
     `;
@@ -196,29 +249,13 @@ export class ChatWidget {
   }
 
   private renderMessage(msg: Message): string {
-    const sourcesHtml =
-      msg.sources && msg.sources.length > 0
-        ? `<div class="sources">
-            <div class="sources-label">Sources</div>
-            ${msg.sources
-              .map(
-                (s) =>
-                  `<div class="source-item">
-                    <span class="source-dot"></span>
-                    ${s.url
-                      ? `<a href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escapeHtml(s.title)}</a>`
-                      : `<span>${escapeHtml(s.title)}</span>`
-                    }
-                  </div>`
-              )
-              .join("")}
-          </div>`
-        : "";
-
     return `
       <div class="message ${msg.role}">
-        <div class="bubble">${escapeHtml(msg.content)}</div>
-        ${sourcesHtml}
+        <div class="bubble">${
+          msg.role === "assistant"
+            ? linkSourcesInText(msg.content, msg.sources)
+            : escapeHtml(msg.content)
+        }</div>
         <div class="message-time">${formatTime(msg.ts)}</div>
       </div>
     `;
@@ -256,6 +293,8 @@ export class ChatWidget {
   private attachListeners() {
     const launcher = this.shadow.getElementById("launcher")!;
     const closeBtn = this.shadow.getElementById("close-btn")!;
+    const panel = this.shadow.getElementById("panel") as HTMLElement;
+    const grip = this.shadow.getElementById("resize-grip") as HTMLButtonElement | null;
     const input = this.shadow.getElementById("input") as HTMLTextAreaElement;
     const sendBtn = this.shadow.getElementById("send-btn") as HTMLButtonElement;
 
@@ -275,6 +314,41 @@ export class ChatWidget {
     });
 
     sendBtn.addEventListener("click", () => void this.sendMessage());
+
+    // Custom resize from top-left (instead of native bottom-right handle)
+    if (grip) {
+      grip.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        grip.setPointerCapture(e.pointerId);
+
+        const startW = panel.getBoundingClientRect().width;
+        const startH = panel.getBoundingClientRect().height;
+        const startX = e.clientX;
+        const startY = e.clientY;
+
+        const minW = 340;
+        const minH = 460;
+        const maxW = Math.min(window.innerWidth - 32, 720);
+        const maxH = Math.min(window.innerHeight - 120, 900);
+
+        const onMove = (ev: PointerEvent) => {
+          const dx = ev.clientX - startX;
+          const dy = ev.clientY - startY;
+          const nextW = Math.max(minW, Math.min(maxW, startW - dx));
+          const nextH = Math.max(minH, Math.min(maxH, startH - dy));
+          panel.style.width = `${Math.round(nextW)}px`;
+          panel.style.height = `${Math.round(nextH)}px`;
+        };
+
+        const onUp = () => {
+          window.removeEventListener("pointermove", onMove);
+          window.removeEventListener("pointerup", onUp);
+        };
+
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp, { once: true });
+      });
+    }
   }
 
   private toggle() {
@@ -423,27 +497,13 @@ export class ChatWidget {
       }
       if (bubbleEl) bubbleEl.textContent = assistantContent;
     } finally {
-      // Add time + sources
+      // Add time + inline sources
       if (assistantEl) {
-        if (assistantMsg.sources?.length) {
-          const sourcesDiv = document.createElement("div");
-          sourcesDiv.className = "sources";
-          sourcesDiv.innerHTML = `
-            <div class="sources-label">Sources</div>
-            ${assistantMsg.sources
-              .map(
-                (s) =>
-                  `<div class="source-item">
-                    <span class="source-dot"></span>
-                    ${s.url
-                      ? `<a href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escapeHtml(s.title)}</a>`
-                      : `<span>${escapeHtml(s.title)}</span>`
-                    }
-                  </div>`
-              )
-              .join("")}
-          `;
-          assistantEl.appendChild(sourcesDiv);
+        if (bubbleEl) {
+          bubbleEl.innerHTML = linkSourcesInText(
+            assistantContent,
+            assistantMsg.sources
+          );
         }
 
         const timeEl = document.createElement("div");

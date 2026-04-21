@@ -34,6 +34,7 @@ export const sitesRouter = createTRPCRouter({
     .input(
       z.object({
         name: z.string().min(1).max(100),
+        primaryUrl: z.string().url(),
         allowedDomains: z.array(z.string()).default([]),
       })
     )
@@ -59,6 +60,7 @@ export const sitesRouter = createTRPCRouter({
         data: {
           orgId: user!.orgId!,
           name: input.name,
+          primaryUrl: input.primaryUrl,
           allowedDomains: input.allowedDomains,
         },
       });
@@ -72,7 +74,9 @@ export const sitesRouter = createTRPCRouter({
         primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
         title: z.string().max(60).optional(),
         greeting: z.string().max(200).optional(),
-        logoUrl: z.string().url().optional().nullable(),
+        primaryUrl: z.string().url().optional(),
+        // Can be a normal URL or a data URL (base64) stored in Postgres.
+        logoUrl: z.string().max(500_000).optional().nullable(),
         allowedDomains: z.array(z.string()).optional(),
         allowedTopics: z.array(z.string()).optional(),
         modelId: z.string().optional(),

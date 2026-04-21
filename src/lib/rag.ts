@@ -1,12 +1,13 @@
 import { type Site } from "@prisma/client";
 
-import { chatCompletion, embedText, streamChat } from "~/lib/openrouter";
-import { getNamespace, queryPinecone, type RetrievedChunk } from "~/lib/pinecone";
+import { chatCompletion, streamChat } from "~/lib/openrouter";
+import { embedText } from "~/lib/pinecone-embed";
+import { queryPinecone, resolvePineconeTarget, type RetrievedChunk } from "~/lib/pinecone";
 import { env } from "~/env.js";
 
-const SEARCH_QUERY_LIMIT = 3;
-const TOP_K = 5;
-const SCORE_THRESHOLD = 0.5;
+const SEARCH_QUERY_LIMIT = 2;
+const TOP_K = 10;
+const SCORE_THRESHOLD = 0.05;
 const MAX_CONTEXT_MESSAGES = 6;
 
 export interface ChatMessage {
@@ -31,11 +32,16 @@ function buildQueryPlannerPrompt(
       ? `The knowledge base covers: ${allowedTopics.join(", ")}.`
       : "";
 
-  return `You are a search query planner. Given the conversation below, generate up to ${SEARCH_QUERY_LIMIT} concise search queries to retrieve relevant context from a knowledge base.
+  return `You are a search query planner. Given the conversation below, generate up to ${SEARCH_QUERY_LIMIT} search queries to retrieve relevant context from a knowledge base.
 
 ${topicsHint}
 
-Return ONLY a JSON object: { "queries": ["query1", "query2", ...] }
+Guidelines:
+- Return 1 query if that's sufficient. Only return 2 if it genuinely adds coverage.
+- Do NOT generate near-duplicates. Each query must target a different angle (e.g. definition vs rules vs eligibility).
+- Prefer richer queries with key entities, synonyms, and constraints from the conversation.
+
+Return ONLY a JSON object: { "queries": ["query1", "query2"] }
 
 Conversation:
 ${recentMessages.map((m) => `${m.role}: ${m.content}`).join("\n")}
@@ -58,7 +64,22 @@ async function planQueries(
     const parsed = JSON.parse(raw) as { queries?: unknown };
     const queries = parsed.queries;
     if (Array.isArray(queries)) {
-      return queries.filter((q): q is string => typeof q === "string").slice(0, SEARCH_QUERY_LIMIT);
+      const cleaned = queries
+        .filter((q): q is string => typeof q === "string")
+        .map((q) => q.trim())
+        .filter(Boolean);
+
+      // De-dupe (case-insensitive) and keep only a few strong queries.
+      const seen = new Set<string>();
+      const unique: string[] = [];
+      for (const q of cleaned) {
+        const key = q.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        unique.push(q);
+        if (unique.length >= SEARCH_QUERY_LIMIT) break;
+      }
+      return unique;
     }
   } catch {
     // fallback: use last user message
@@ -80,21 +101,38 @@ function isDomainGuardPassed(
   chunks: RetrievedChunk[],
   allowedTopics: string[]
 ): boolean {
-  if (allowedTopics.length === 0) return true;
-  if (chunks.length === 0) return false;
-  return true; // topics filter happens at system prompt level
+  // We still include allowedTopics in the system prompt as a scope instruction,
+  // but we do NOT hard-block answering when retrieval is empty.
+  // Otherwise the widget becomes a "stuck bot" whenever Pinecone returns no matches.
+  void allowedTopics;
+  void chunks;
+  return true;
 }
 
 function buildSystemPrompt(
   site: Pick<Site, "title" | "greeting" | "allowedTopics">,
   contextChunks: RetrievedChunk[]
 ): string {
+  const stripMarkdown = (s: string) =>
+    s
+      // links: [text](url) -> text (url)
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)")
+      // emphasis/code markers
+      .replace(/[*_`]+/g, "")
+      // headings
+      .replace(/^#{1,6}\s+/gm, "")
+      // list markers
+      .replace(/^\s*[-*]\s+/gm, "")
+      // collapse whitespace
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
   const contextBlock =
     contextChunks.length > 0
       ? contextChunks
           .map(
             (c, i) =>
-              `[${i + 1}] ${c.title ? `Title: ${c.title}\n` : ""}${c.url ? `URL: ${c.url}\n` : ""}Content: ${c.text}`
+              `[${i + 1}] ${c.title ? `Title: ${stripMarkdown(c.title)}\n` : ""}${c.url ? `URL: ${c.url}\n` : ""}Content: ${stripMarkdown(c.text)}`
           )
           .join("\n\n")
       : "No relevant context found.";
@@ -112,8 +150,11 @@ RULES:
 - Base your answers ONLY on the context provided below.
 - If the context does not contain enough information, say so honestly.
 - Do not fabricate facts, links, or information.
-- At the end of your response, list source numbers you used as [1], [2], etc.
-- Keep responses concise and helpful.
+- Write in plain conversational text. Do NOT use Markdown (no headings, bullet lists, bold/italic, or code fences).
+- Do NOT cite sources as numbers like [1] or (1).
+- When you rely on information from a source, mention the page title naturally in the sentence (e.g. "According to the rules page...").
+- Do not include raw URLs in the body; the UI will render clickable source links separately.
+- Keep responses concise and helpful. End with a short, friendly follow-up question when appropriate.
 
 CONTEXT:
 ${contextBlock}`;
@@ -125,50 +166,122 @@ export async function* ragStream(
 ): AsyncGenerator<
   | { type: "token"; content: string }
   | { type: "sources"; sources: Source[] }
-  | { type: "out_of_scope" }
+  | { type: "out_of_scope"; reason?: string }
+  | { type: "debug"; stage: string; data: Record<string, unknown> }
   | { type: "error"; message: string }
 > {
-  const indexName = site.pineconeIndex ?? env.PINECONE_INDEX;
-  const namespace =
-    site.pineconeNs ?? getNamespace(site.id, site.liveVersion);
+  const { indexName, namespace, indexHostUrl } = resolvePineconeTarget(
+    site,
+    env.PINECONE_INDEX,
+    env.PINECONE_INDEX_HOST,
+  );
+  yield {
+    type: "debug",
+    stage: "pinecone_target",
+    data: { indexName, namespace, indexHostUrl: indexHostUrl ?? null },
+  };
 
   // 1. Plan search queries
   const queries = await planQueries(messages, site.allowedTopics, site.modelId);
+  yield {
+    type: "debug",
+    stage: "plan_queries",
+    data: { queries, allowedTopics: site.allowedTopics, modelId: site.modelId },
+  };
 
   if (queries.length === 0) {
-    yield { type: "out_of_scope" };
-    return;
+    // Fall back to answering without retrieval
+    yield {
+      type: "debug",
+      stage: "out_of_scope",
+      data: { reason: "no_queries" },
+    };
   }
 
   // 2. Embed + retrieve
   const allChunks: RetrievedChunk[] = [];
+  const retrievalErrors: Array<{
+    query: string;
+    embeddingDims?: number;
+    error: string;
+  }> = [];
   for (const query of queries) {
     try {
       const embedding = await embedText(query);
       const chunks = await queryPinecone({
         indexName,
         namespace,
+        indexHostUrl,
         queryEmbedding: embedding,
         topK: TOP_K,
         scoreThreshold: SCORE_THRESHOLD,
       });
       allChunks.push(...chunks);
-    } catch {
-      // continue with other queries
+    } catch (e) {
+      retrievalErrors.push({
+        query,
+        // best-effort: embedText may have failed before returning dims
+        error: e instanceof Error ? e.message : String(e),
+      });
+      yield {
+        type: "debug",
+        stage: "retrieval_error",
+        data: {
+          query,
+          error: e instanceof Error ? e.message : String(e),
+        },
+      };
     }
   }
 
   // 3. Deduplicate + sort by score
   const chunks = dedupeChunks(allChunks).sort((a, b) => b.score - a.score).slice(0, 8);
+  yield {
+    type: "debug",
+    stage: "retrieval",
+    data: {
+      queryCount: queries.length,
+      retrievedChunkCount: allChunks.length,
+      dedupedChunkCount: chunks.length,
+      topK: TOP_K,
+      scoreThreshold: SCORE_THRESHOLD,
+      retrievalErrorCount: retrievalErrors.length,
+    },
+  };
+  yield {
+    type: "debug",
+    stage: "retrieved_chunks",
+    data: {
+      chunks: chunks.map((c) => ({
+        id: c.id,
+        score: Math.round(c.score * 1000) / 1000,
+        title: c.title ?? null,
+        url: c.url ?? null,
+        textPreview: c.text.slice(0, 800),
+      })),
+    },
+  };
 
   // 4. Domain guard
   if (!isDomainGuardPassed(chunks, site.allowedTopics)) {
-    yield { type: "out_of_scope" };
-    return;
+    yield {
+      type: "debug",
+      stage: "out_of_scope",
+      data: { reason: "domain_guard_failed" },
+    };
   }
 
   // 5. Build prompt
   const systemPrompt = buildSystemPrompt(site, chunks);
+  yield {
+    type: "debug",
+    stage: "system_prompt",
+    data: {
+      systemPrompt,
+      hasContext: chunks.length > 0,
+      allowedTopics: site.allowedTopics,
+    },
+  };
   const chatMessages = [
     { role: "system" as const, content: systemPrompt },
     ...messages.slice(-MAX_CONTEXT_MESSAGES).map((m) => ({

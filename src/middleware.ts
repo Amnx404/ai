@@ -6,6 +6,9 @@ export default withAuth(
     return NextResponse.next();
   },
   {
+    pages: {
+      signIn: "/auth/signin",
+    },
     callbacks: {
       authorized: ({ token }) => !!token,
     },
