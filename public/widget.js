@@ -489,7 +489,7 @@
 
         <div id="powered-by">
           <a href="${c((f=(u=this.config)==null?void 0:u.appUrl)!=null?f:this.baseUrl)}" target="_blank" rel="noopener">
-            Powered by Gemini
+            Powered by Alt Ego
           </a>
         </div>
       </div>

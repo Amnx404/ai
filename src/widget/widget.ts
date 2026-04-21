@@ -288,7 +288,7 @@ export class ChatWidget {
 
         <div id="powered-by">
           <a href="${escapeHtml(this.config?.appUrl ?? this.baseUrl)}" target="_blank" rel="noopener">
-            Powered by Gemini
+            Powered by Alt Ego
           </a>
         </div>
       </div>
