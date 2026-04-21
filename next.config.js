@@ -1,9 +1,7 @@
 /** @type {import("next").NextConfig} */
 const config = {
   reactStrictMode: true,
-  experimental: {
-    serverComponentsExternalPackages: ["@prisma/client"],
-  },
+  serverExternalPackages: ["@prisma/client"],
 };
 
 export default config;
