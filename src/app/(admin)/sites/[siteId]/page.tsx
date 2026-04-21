@@ -10,8 +10,9 @@ import { SiteAnalytics } from "./_components/site-analytics";
 export default async function SiteDetailPage({
   params,
 }: {
-  params: { siteId: string };
+  params: Promise<{ siteId: string }>;
 }) {
+  const { siteId } = await params;
   const session = await getServerSession(authOptions);
   const user = await db.user.findUnique({
     where: { id: session!.user.id },
@@ -19,7 +20,7 @@ export default async function SiteDetailPage({
   });
 
   const site = await db.site.findFirst({
-    where: { id: params.siteId, orgId: user?.orgId ?? "" },
+    where: { id: siteId, orgId: user?.orgId ?? "" },
   });
 
   if (!site) notFound();
