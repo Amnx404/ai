@@ -2,9 +2,10 @@
 
 export function getNamespace(siteId: string, liveVersion?: number) {
   if (liveVersion && liveVersion > 0) {
-    return `site-${siteId}-live-v${liveVersion}`;
+    // Namespace prefix should be the raw siteId.
+    return `${siteId}-live-v${liveVersion}`;
   }
-  return `site-${siteId}`;
+  return `${siteId}`;
 }
 
 export function resolvePineconeTarget(
@@ -13,14 +14,16 @@ export function resolvePineconeTarget(
     liveVersion: number;
     pineconeIndex: string | null | undefined;
     pineconeNs: string | null | undefined;
+    livePineconeNs?: string | null | undefined;
   },
   envFallbackIndex: string,
   envIndexHost?: string,
 ) {
   const idx = site.pineconeIndex?.trim();
   const ns = site.pineconeNs?.trim();
+  const live = site.livePineconeNs?.trim();
   const indexName = idx || envFallbackIndex;
-  const namespace = ns || getNamespace(site.id, site.liveVersion);
+  const namespace = live || ns || getNamespace(site.id, site.liveVersion);
   return {
     indexName,
     namespace,
@@ -29,6 +32,10 @@ export function resolvePineconeTarget(
     indexHostUrl:
       indexName === envFallbackIndex ? envIndexHost : undefined,
     indexSource: idx ? ("site" as const) : ("env" as const),
-    namespaceSource: ns ? ("override" as const) : ("derived" as const),
+    namespaceSource: live
+      ? ("live" as const)
+      : ns
+        ? ("override" as const)
+        : ("derived" as const),
   };
 }

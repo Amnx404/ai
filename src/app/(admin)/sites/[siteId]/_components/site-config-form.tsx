@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { type Site } from "@prisma/client";
 
@@ -30,6 +30,12 @@ export function SiteConfigForm({
     "branding"
   );
 
+  const initialScrapeConfig = useMemo(() => {
+    const raw = site.scrapeConfig;
+    if (!raw || typeof raw !== "object") return {};
+    return raw as Record<string, unknown>;
+  }, [site.scrapeConfig]);
+
   const [form, setForm] = useState({
     name: site.name,
     primaryColor: site.primaryColor,
@@ -45,7 +51,54 @@ export function SiteConfigForm({
     pineconeNs: site.pineconeNs ?? "",
     liveVersion: site.liveVersion,
     isActive: site.isActive,
+    livePineconePrefix:
+      (
+        site as unknown as {
+          livePineconePrefix?: string | null;
+        }
+      ).livePineconePrefix ?? `${site.id}-live-v-`,
+    scrapeSeedUrls: Array.isArray(initialScrapeConfig.seed_urls)
+      ? (initialScrapeConfig.seed_urls as unknown[])
+          .filter((v): v is string => typeof v === "string")
+          .join("\n")
+      : (site.primaryUrl ? site.primaryUrl : ""),
+    scrapeAllowedPrefixes: Array.isArray(initialScrapeConfig.allowed_prefixes)
+      ? (initialScrapeConfig.allowed_prefixes as unknown[])
+          .filter((v): v is string => typeof v === "string")
+          .join("\n")
+      : (() => {
+          try {
+            const u = new URL(site.primaryUrl || "");
+            return `${u.origin}/`;
+          } catch {
+            return "";
+          }
+        })(),
+    scrapeMaxPages:
+      typeof initialScrapeConfig.max_pages === "number"
+        ? String(initialScrapeConfig.max_pages)
+        : "200",
+    scrapeDelay:
+      typeof initialScrapeConfig.delay === "number"
+        ? String(initialScrapeConfig.delay)
+        : "0.5",
+    scrapeParallelWorkers:
+      typeof initialScrapeConfig.parallel_workers === "number"
+        ? String(initialScrapeConfig.parallel_workers)
+        : "4",
+    scrapeUseSelenium:
+      typeof initialScrapeConfig.use_selenium === "boolean"
+        ? initialScrapeConfig.use_selenium
+        : true,
   });
+
+  const [kbAdvanced, setKbAdvanced] = useState(false);
+  const [kbRunId, setKbRunId] = useState<string>("");
+  const [kbStep, setKbStep] = useState<"idle" | "scrape" | "prepare" | "upload" | "done" | "error">(
+    "idle"
+  );
+  const [kbError, setKbError] = useState<string>("");
+  const [kbLog, setKbLog] = useState<string>("");
 
   const updateSite = api.sites.update.useMutation({
     onSuccess: () => router.refresh(),
@@ -84,9 +137,122 @@ export function SiteConfigForm({
       pineconeIndex: form.pineconeIndex || null,
       pineconeNs: form.pineconeNs || null,
       liveVersion: form.liveVersion,
+      livePineconePrefix: form.livePineconePrefix.trim() || null,
+      scrapeConfig: {
+        seed_urls: form.scrapeSeedUrls
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean),
+        allowed_prefixes: form.scrapeAllowedPrefixes
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean),
+        max_pages: Number(form.scrapeMaxPages || 200),
+        delay: Number(form.scrapeDelay || 0.5),
+        parallel_workers: Number(form.scrapeParallelWorkers || 4),
+        use_selenium: !!form.scrapeUseSelenium,
+        respect_allowed_prefixes: true,
+      },
       isActive: form.isActive,
     });
   }
+
+  async function kbScrape() {
+    setKbError("");
+    setKbLog("");
+    setKbStep("scrape");
+    try {
+      const scrape = {
+        seed_urls: form.scrapeSeedUrls
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean),
+        allowed_prefixes: form.scrapeAllowedPrefixes
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean),
+        max_pages: Number(form.scrapeMaxPages || 200),
+        delay: Number(form.scrapeDelay || 0.5),
+        parallel_workers: Number(form.scrapeParallelWorkers || 4),
+        use_selenium: !!form.scrapeUseSelenium,
+        respect_allowed_prefixes: true,
+      };
+      const res = await fetch("/api/v1/knowledge-base/scrape", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ siteId: site.id, scrape }),
+      });
+      const json = (await res.json()) as any;
+      if (!res.ok) throw new Error(json?.error?.message ?? json?.error ?? "Scrape failed");
+      setKbRunId(json.run_id);
+      setKbLog(JSON.stringify(json, null, 2));
+      return json.run_id as string;
+    } catch (e: any) {
+      setKbStep("error");
+      setKbError(e?.message ?? "Scrape failed");
+      throw e;
+    }
+  }
+
+  async function kbPrepare(runId: string) {
+    setKbStep("prepare");
+    try {
+      const res = await fetch("/api/v1/knowledge-base/prepare", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ siteId: site.id, runId }),
+      });
+      const json = (await res.json()) as any;
+      if (!res.ok) throw new Error(json?.error?.message ?? json?.error ?? "Prepare failed");
+      setKbLog(JSON.stringify(json, null, 2));
+    } catch (e: any) {
+      setKbStep("error");
+      setKbError(e?.message ?? "Prepare failed");
+      throw e;
+    }
+  }
+
+  async function kbUpload(runId: string) {
+    setKbStep("upload");
+    try {
+      const res = await fetch("/api/v1/knowledge-base/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          siteId: site.id,
+          runId,
+          livePrefix: form.livePineconePrefix.trim(),
+          // Small debugging defaults; you can remove/raise later
+          maxRecords: kbAdvanced ? undefined : 500,
+          batchSize: 100,
+          embedBatchSize: 32,
+          embedWorkers: 1,
+        }),
+      });
+      const json = (await res.json()) as any;
+      if (!res.ok) throw new Error(json?.error?.message ?? json?.error ?? "Upload failed");
+      setKbLog(JSON.stringify(json, null, 2));
+      setKbStep("done");
+      router.refresh();
+    } catch (e: any) {
+      setKbStep("error");
+      setKbError(e?.message ?? "Upload failed");
+      throw e;
+    }
+  }
+
+  async function runKbPipeline() {
+    setKbError("");
+    const runId = await kbScrape();
+    await kbPrepare(runId);
+    await kbUpload(runId);
+  }
+
+  const progress = {
+    scrape: kbStep === "scrape" || kbStep === "prepare" || kbStep === "upload" || kbStep === "done",
+    prepare: kbStep === "prepare" || kbStep === "upload" || kbStep === "done",
+    upload: kbStep === "upload" || kbStep === "done",
+  };
 
   const tabs = [
     { id: "branding" as const, label: "Branding" },
@@ -321,6 +487,149 @@ export function SiteConfigForm({
 
         {tab === "knowledge" && (
           <>
+            <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="font-semibold text-gray-900">Knowledge base refresh</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Scrape → Prepare (finetune=true) → Upload (text_source=fine). Uses the internal scraper pipeline service.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void runKbPipeline()}
+                  disabled={kbStep === "scrape" || kbStep === "prepare" || kbStep === "upload"}
+                  className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
+                >
+                  {kbStep === "scrape" || kbStep === "prepare" || kbStep === "upload"
+                    ? "Running…"
+                    : "Run refresh"}
+                </button>
+              </div>
+
+              <div className="mt-4 grid grid-cols-3 gap-2">
+                <ProgressStep label="Scrape" active={kbStep === "scrape"} done={progress.scrape} />
+                <ProgressStep label="Prepare" active={kbStep === "prepare"} done={progress.prepare} />
+                <ProgressStep label="Upload" active={kbStep === "upload"} done={progress.upload} />
+              </div>
+
+              {kbRunId ? (
+                <p className="mt-3 text-xs text-gray-600">
+                  Run ID: <span className="font-mono">{kbRunId}</span>
+                </p>
+              ) : null}
+              {kbError ? (
+                <p className="mt-3 text-sm text-red-600">{kbError}</p>
+              ) : null}
+              {kbLog ? (
+                <pre className="mt-3 max-h-56 overflow-auto rounded-lg bg-white border border-gray-200 p-3 text-xs">
+{kbLog}
+                </pre>
+              ) : null}
+            </div>
+
+            <Field label="Live prefix" hint="Editable. The pipeline will create namespaces like {prefix}1, {prefix}2, …">
+              <input
+                value={form.livePineconePrefix}
+                onChange={(e) => setForm({ ...form, livePineconePrefix: e.target.value })}
+                className={inputCls}
+              />
+            </Field>
+
+            <Field label="Scrape config (basic)" hint="One per line.">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-600">Seed URLs</label>
+                  <textarea
+                    value={form.scrapeSeedUrls}
+                    onChange={(e) => setForm({ ...form, scrapeSeedUrls: e.target.value })}
+                    rows={4}
+                    className={`${inputCls} resize-none font-mono text-xs`}
+                    placeholder="https://example.com/docs"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-600">Allowed prefixes</label>
+                  <textarea
+                    value={form.scrapeAllowedPrefixes}
+                    onChange={(e) => setForm({ ...form, scrapeAllowedPrefixes: e.target.value })}
+                    rows={4}
+                    className={`${inputCls} resize-none font-mono text-xs`}
+                    placeholder="https://example.com/docs/"
+                  />
+                </div>
+              </div>
+            </Field>
+
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Field label="Max pages">
+                <input
+                  value={form.scrapeMaxPages}
+                  onChange={(e) => setForm({ ...form, scrapeMaxPages: e.target.value })}
+                  className={inputCls}
+                />
+              </Field>
+              <Field label="Delay (seconds)">
+                <input
+                  value={form.scrapeDelay}
+                  onChange={(e) => setForm({ ...form, scrapeDelay: e.target.value })}
+                  className={inputCls}
+                />
+              </Field>
+              <Field label="Parallel workers">
+                <input
+                  value={form.scrapeParallelWorkers}
+                  onChange={(e) => setForm({ ...form, scrapeParallelWorkers: e.target.value })}
+                  className={inputCls}
+                />
+              </Field>
+            </div>
+
+            <Field label="Use Selenium">
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={form.scrapeUseSelenium}
+                  onChange={(e) => setForm({ ...form, scrapeUseSelenium: e.target.checked })}
+                  className="h-4 w-4 accent-indigo-600"
+                />
+                Render pages (Selenium)
+              </label>
+            </Field>
+
+            <button
+              type="button"
+              onClick={() => setKbAdvanced((v) => !v)}
+              className="text-sm font-medium text-gray-700 underline"
+            >
+              {kbAdvanced ? "Hide advanced" : "Show advanced"}
+            </button>
+
+            {kbAdvanced ? (
+              <div className="rounded-xl border border-gray-200 bg-white px-4 py-4 space-y-3">
+                <p className="text-sm font-semibold text-gray-900">Advanced scrape options</p>
+                <p className="text-xs text-gray-500">
+                  For now this UI keeps advanced options minimal. We can add the full schema fields next (timeouts, depth, allow/deny patterns, etc).
+                </p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label="Selenium page load timeout (seconds)">
+                    <input
+                      value={String((initialScrapeConfig.selenium_page_load_timeout as any) ?? 20)}
+                      readOnly
+                      className={`${inputCls} bg-gray-50`}
+                    />
+                  </Field>
+                  <Field label="Selenium render wait (seconds)">
+                    <input
+                      value={String((initialScrapeConfig.selenium_render_wait as any) ?? 1.0)}
+                      readOnly
+                      className={`${inputCls} bg-gray-50`}
+                    />
+                  </Field>
+                </div>
+              </div>
+            ) : null}
+
             <Field
               label="Pinecone index"
               hint="Leave empty to use the default index from env."
@@ -415,6 +724,29 @@ export function SiteConfigForm({
           {updateSite.isPending ? "Saving…" : "Save changes"}
         </button>
       </div>
+    </div>
+  );
+}
+
+function ProgressStep({
+  label,
+  active,
+  done,
+}: {
+  label: string;
+  active: boolean;
+  done: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2">
+      <span
+        className={`h-2.5 w-2.5 rounded-full ${
+          done ? "bg-green-500" : active ? "bg-indigo-500" : "bg-gray-300"
+        }`}
+      />
+      <span className={`text-xs font-medium ${active ? "text-indigo-700" : "text-gray-700"}`}>
+        {label}
+      </span>
     </div>
   );
 }

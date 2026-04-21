@@ -2,6 +2,18 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
+import { env } from "~/env.js";
+
+function withAppDomain(domains: string[]) {
+  const set = new Set(domains.map((d) => d.trim()).filter(Boolean));
+  try {
+    const appHost = new URL(env.NEXTAUTH_URL).host;
+    if (appHost) set.add(appHost);
+  } catch {
+    // ignore
+  }
+  return [...set];
+}
 
 export const sitesRouter = createTRPCRouter({
   list: protectedProcedure.query(async ({ ctx }) => {
@@ -61,7 +73,7 @@ export const sitesRouter = createTRPCRouter({
           orgId: user!.orgId!,
           name: input.name,
           primaryUrl: input.primaryUrl,
-          allowedDomains: input.allowedDomains,
+          allowedDomains: withAppDomain(input.allowedDomains),
         },
       });
     }),
@@ -84,6 +96,8 @@ export const sitesRouter = createTRPCRouter({
         pineconeIndex: z.string().optional().nullable(),
         pineconeNs: z.string().optional().nullable(),
         liveVersion: z.number().int().positive().optional(),
+        livePineconePrefix: z.string().min(1).max(200).optional().nullable(),
+        scrapeConfig: z.record(z.unknown()).optional().nullable(),
         isActive: z.boolean().optional(),
       })
     )
@@ -97,7 +111,21 @@ export const sitesRouter = createTRPCRouter({
         where: { id, orgId: user?.orgId ?? "" },
       });
       if (!site) throw new TRPCError({ code: "NOT_FOUND" });
-      return ctx.db.site.update({ where: { id }, data });
+      const { scrapeConfig, ...rest } = data;
+      return ctx.db.site.update({
+        where: { id },
+        data: {
+          ...rest,
+          ...(typeof rest.allowedDomains === "undefined"
+            ? {}
+            : { allowedDomains: withAppDomain(rest.allowedDomains) }),
+          ...(typeof scrapeConfig === "undefined"
+            ? {}
+            : scrapeConfig === null
+              ? { scrapeConfig: undefined }
+              : { scrapeConfig: scrapeConfig as never }),
+        },
+      });
     }),
 
   delete: protectedProcedure

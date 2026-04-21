@@ -91,11 +91,39 @@ model Site {
   pineconeIndex  String?
   pineconeNs     String?
   liveVersion    Int          @default(1)
+  // Points to the latest "live" namespace written by the knowledge base pipeline.
+  // When set, retrieval uses this over derived namespaces.
+  livePineconeNs String?
+  // Editable prefix used when creating new live namespaces via the pipeline.
+  // Example: "site-<siteId>-live-v-"
+  livePineconePrefix String?
+  // Saved scrape settings for the knowledge base pipeline (shown in admin UI).
+  scrapeConfig   Json?
   isActive       Boolean      @default(true)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   chatSessions   ChatSession[]
   analyticsEvents AnalyticsEvent[]
+  kbRuns         KnowledgeBaseRun[]
+}
+
+model KnowledgeBaseRun {
+  id         String   @id @default(cuid())
+  siteId     String
+  site       Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  runId      String   @unique
+  step       String   // "scrape" | "prepare" | "upload" | "status"
+  ok         Boolean  @default(false)
+  params     Json?
+  outputs    Json?
+  logs       Json?
+  message    String?
+  startedAt  DateTime?
+  finishedAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([siteId, createdAt])
 }
 
 model ChatSession {

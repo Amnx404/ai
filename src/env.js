@@ -21,6 +21,12 @@ export const env = createEnv({
     PINECONE_INDEX_HOST: z.string().url().optional(),
     // Optional: Pinecone Inference embedding model id (must match index dimension).
     PINECONE_EMBED_MODEL: z.string().min(1).optional(),
+    // Internal scraper pipeline service (FastAPI) base URL.
+    SCRAPER_PIPELINE_BASE_URL: z.string().url().optional(),
+    // Optional: default finetune model id used by /prepare when finetune=true.
+    SCRAPER_FINETUNE_MODEL: z.string().min(1).optional(),
+    // Prompt used by scraper pipeline when finetune=true (markdown cleaner).
+    FINETUNE_PROMPT: z.string().min(1).optional(),
     WIDGET_JWT_SECRET: z.string().min(1),
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   },
@@ -40,6 +46,9 @@ export const env = createEnv({
     PINECONE_INDEX: process.env.PINECONE_INDEX,
     PINECONE_INDEX_HOST: process.env.PINECONE_INDEX_HOST,
     PINECONE_EMBED_MODEL: process.env.PINECONE_EMBED_MODEL,
+    SCRAPER_PIPELINE_BASE_URL: process.env.SCRAPER_PIPELINE_BASE_URL,
+    SCRAPER_FINETUNE_MODEL: process.env.SCRAPER_FINETUNE_MODEL,
+    FINETUNE_PROMPT: process.env.FINETUNE_PROMPT,
     WIDGET_JWT_SECRET: process.env.WIDGET_JWT_SECRET,
     NODE_ENV: process.env.NODE_ENV,
   },
