@@ -71,22 +71,58 @@ function linkSourcesInText(
   plainText: string,
   sources: Array<{ title: string; url: string; score: number }> | undefined
 ): string {
-  const safe = escapeHtml(plainText);
-  if (!sources?.length) return safe;
+  // Start from escaped HTML, then selectively re-introduce safe links.
+  let html = escapeHtml(plainText);
+
+  // 0) Custom link markup: [[label|https://example.com/path]]
+  // This lets the model emit clickable links without dumping bare URLs into the text.
+  html = html.replace(
+    /\[\[([^\]|]{1,120})\|((?:https?):\/\/[^\s<>"']{1,2048})\]\]/g,
+    (_m, rawLabel: string, rawUrl: string) => {
+      const label = String(rawLabel).trim();
+      const url = String(rawUrl).trim();
+      if (!label || !url) return "";
+      return `<a class="intext-source" href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`;
+    }
+  );
+
+  // 1) Auto-link any raw http(s) URLs that appear in the text.
+  // (The system prompt tries to prevent these, but users still paste them and some models emit them.)
+  html = html.replace(
+    /\bhttps?:\/\/[^\s<>"']+/gi,
+    (raw) =>
+      `<a class="intext-source" href="${escapeHtml(raw)}" target="_blank" rel="noopener">${escapeHtml(raw)}</a>`
+  );
+
+  if (!sources?.length) return html;
 
   // Link up to 5 sources that were actually mentioned (server filters).
-  let html = safe;
   for (const s of sources.slice(0, 5)) {
     if (!s?.url) continue;
-    const label = shortSourceLabel(s.title || s.url || "Source");
-    const escapedLabel = escapeHtml(label);
-    // Replace first occurrence only, case-insensitive.
-    const re = new RegExp(`\\b${escapeRegExp(escapedLabel)}\\b`, "i");
-    if (!re.test(html)) continue;
-    html = html.replace(
-      re,
-      `<a class="intext-source" href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escapedLabel}</a>`
+    const rawTitle = (s.title || "").trim();
+    const mainTitle = (rawTitle.split("|")[0] ?? rawTitle).trim();
+    const shortLabel = shortSourceLabel(rawTitle || s.url || "Source");
+
+    const candidates = Array.from(
+      new Set([mainTitle, rawTitle, shortLabel].map((t) => t.trim()).filter(Boolean))
     );
+
+    // Replace the first occurrence of the *best* candidate, case-insensitive.
+    let replaced = false;
+    for (const c of candidates) {
+      const escaped = escapeHtml(c);
+      const re = new RegExp(`\\b${escapeRegExp(escaped)}\\b`, "i");
+      if (!re.test(html)) continue;
+      html = html.replace(
+        re,
+        `<a class="intext-source" href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escaped}</a>`
+      );
+      replaced = true;
+      break;
+    }
+
+    // If none of the titles were found, don't inject anything.
+    if (!replaced) continue;
   }
   return html;
 }
@@ -216,6 +252,12 @@ export class ChatWidget {
               <span>Online</span>
             </div>
           </div>
+        <button id="reset-btn" aria-label="Reset chat" title="Reset chat">
+          <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+            <polyline points="21 3 21 9 15 9" />
+          </svg>
+        </button>
           <button id="close-btn" aria-label="Close chat">
             <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="18" y1="6" x2="6" y2="18"/>
@@ -302,6 +344,7 @@ export class ChatWidget {
 
   private attachListeners() {
     const launcher = this.shadow.getElementById("launcher")!;
+    const resetBtn = this.shadow.getElementById("reset-btn") as HTMLButtonElement | null;
     const closeBtn = this.shadow.getElementById("close-btn")!;
     const panel = this.shadow.getElementById("panel") as HTMLElement;
     const grip = this.shadow.getElementById("resize-grip") as HTMLButtonElement | null;
@@ -309,6 +352,7 @@ export class ChatWidget {
     const sendBtn = this.shadow.getElementById("send-btn") as HTMLButtonElement;
 
     launcher.addEventListener("click", () => this.toggle());
+    resetBtn?.addEventListener("click", () => this.resetChat());
     closeBtn.addEventListener("click", () => this.close());
 
     input.addEventListener("keydown", (e: KeyboardEvent) => {
@@ -438,7 +482,11 @@ export class ChatWidget {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           siteId: this.siteId,
-          messages: this.messages.slice(-10).map(({ role, content }) => ({ role, content })),
+          messages: this.messages.slice(-10).map(({ role, content, sources }) => ({
+            role,
+            content,
+            ...(sources?.length ? { sources } : {}),
+          })),
           sessionId: this.sessionId,
           token: this.token,
           stream: true,
@@ -531,5 +579,25 @@ export class ChatWidget {
       sendBtn.disabled = false;
       (this.shadow.getElementById("input") as HTMLTextAreaElement | null)?.focus();
     }
+  }
+
+  private resetChat() {
+    if (this.isStreaming) return;
+
+    // Clear state
+    this.messages = [];
+    this.sessionId = null;
+    this.token = null;
+
+    // Clear persisted state
+    sessionStorage.removeItem(`${SESSION_KEY}:${this.siteId}`);
+    sessionStorage.removeItem(`${MESSAGES_KEY}:${this.siteId}`);
+
+    // Reset UI
+    const messagesEl = this.shadow.getElementById("messages");
+    if (messagesEl) {
+      messagesEl.innerHTML = `${this.renderGreeting()}`;
+    }
+    this.scrollToBottom();
   }
 }

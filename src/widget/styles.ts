@@ -218,6 +218,20 @@ export function getStyles(primaryColor: string): string {
     #close-btn:hover { background: rgba(255,255,255,0.15); color: #fff; }
     #close-btn svg { width: 18px; height: 18px; stroke: currentColor; fill: none; }
 
+    #reset-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 4px;
+      color: rgba(255,255,255,0.85);
+      display: flex;
+      border-radius: 8px;
+      transition: background 0.15s;
+    }
+
+    #reset-btn:hover { background: rgba(255,255,255,0.15); color: #fff; }
+    #reset-btn svg { width: 18px; height: 18px; stroke: currentColor; fill: none; }
+
     /* Messages */
     #messages {
       flex: 1;

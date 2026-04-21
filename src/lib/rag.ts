@@ -13,6 +13,7 @@ const MAX_CONTEXT_MESSAGES = 6;
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  sources?: Array<{ title: string; url: string; score?: number }>;
 }
 
 export interface Source {
@@ -27,19 +28,38 @@ function buildQueryPlannerPrompt(
 ): string {
   const recentMessages = messages.slice(-MAX_CONTEXT_MESSAGES);
   const lastUserMsg = [...recentMessages].reverse().find((m) => m.role === "user");
+  const nowIso = new Date().toISOString();
   const topicsHint =
     allowedTopics.length > 0
       ? `The knowledge base covers: ${allowedTopics.join(", ")}.`
+      : "";
+
+  const recentSources = recentMessages
+    .filter((m) => m.role === "assistant")
+    .flatMap((m) => m.sources ?? [])
+    .slice(-8);
+
+  const sourcesHint =
+    recentSources.length > 0
+      ? `Previously used sources (you can reuse these if the user is following up):\n${recentSources
+          .map((s) => `- ${s.title} (${s.url})`)
+          .join("\n")}`
       : "";
 
   return `You are a search query planner. Given the conversation below, generate up to ${SEARCH_QUERY_LIMIT} search queries to retrieve relevant context from a knowledge base.
 
 ${topicsHint}
 
+Current date/time (UTC): ${nowIso}
+
 Guidelines:
 - Return 1 query if that's sufficient. Only return 2 if it genuinely adds coverage.
 - Do NOT generate near-duplicates. Each query must target a different angle (e.g. definition vs rules vs eligibility).
 - Prefer richer queries with key entities, synonyms, and constraints from the conversation.
+- If the user did NOT specify a timeframe, assume they want the latest info and include the current year (${new Date().getUTCFullYear()}) when it helps.
+- If the user DID specify a timeframe (e.g. "in 2023", "last season"), respect it and do not force "latest".
+
+${sourcesHint}
 
 Return ONLY a JSON object: { "queries": ["query1", "query2"] }
 
@@ -152,8 +172,8 @@ RULES:
 - Do not fabricate facts, links, or information.
 - Write in plain conversational text. Do NOT use Markdown (no headings, bullet lists, bold/italic, or code fences).
 - Do NOT cite sources as numbers like [1] or (1).
-- When you rely on information from a source, mention the page title naturally in the sentence (e.g. "According to the rules page...").
-- Do not include raw URLs in the body; the UI will render clickable source links separately.
+- When you rely on information from a source, mention the page title with its URL naturally in the sentence (e.g. "According to the rules page..."), as shown below.
+- URLs will be rendered as clickable links in the UI. To cite, use this exact format: [[link text|https://example.com/path]]
 - Keep responses concise and helpful. End with a short, friendly follow-up question when appropriate.
 
 CONTEXT:

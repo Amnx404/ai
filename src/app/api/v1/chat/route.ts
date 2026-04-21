@@ -16,6 +16,15 @@ const bodySchema = z.object({
       z.object({
         role: z.enum(["user", "assistant"]),
         content: z.string().max(4000),
+        sources: z
+          .array(
+            z.object({
+              title: z.string(),
+              url: z.string().url(),
+              score: z.number().optional(),
+            })
+          )
+          .optional(),
       })
     )
     .min(1)
