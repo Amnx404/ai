@@ -119,7 +119,14 @@ export class ChatWidget {
   private async init() {
     try {
       const res = await fetch(`${this.baseUrl}/api/v1/widget-config?siteId=${this.siteId}`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        // If the site is disabled/deleted, the config endpoint returns 404.
+        // In that case, do not mount the widget UI at all.
+        if (res.status === 404) {
+          this.host.remove();
+        }
+        return;
+      }
       this.config = (await res.json()) as WidgetConfig;
     } catch {
       this.config = {
@@ -130,6 +137,9 @@ export class ChatWidget {
         allowedTopics: [],
       };
     }
+
+    // If the host was removed (disabled site), stop initialization.
+    if (!this.host.isConnected) return;
 
     // Restore session
     const savedSession = sessionStorage.getItem(`${SESSION_KEY}:${this.siteId}`);
