@@ -64,14 +64,16 @@ export async function POST(req: NextRequest) {
 
   const pineconeTarget = resolvePineconeTarget(site, env.PINECONE_INDEX);
   const langfuse = getLangfuse();
+  // One trace per browser session (sessionId is created by /api/v1/session and stored in sessionStorage).
+  // Each message becomes a SPAN inside this trace, with EVENTs for RAG + a GENERATION for the model output.
+  const effectiveSessionId =
+    sessionId && sessionId.length > 0 ? sessionId : crypto.randomUUID();
   const trace = langfuse?.trace({
-    name: "widget_chat",
-    sessionId,
-    input: {
-      siteId,
-      messages,
-    },
+    id: effectiveSessionId,
+    name: "widget_session",
+    sessionId: effectiveSessionId,
     metadata: {
+      siteId,
       origin,
       pinecone: pineconeTarget,
       modelId: site.modelId,
@@ -82,29 +84,7 @@ export async function POST(req: NextRequest) {
   if (trace) {
     const url = getLangfuseTraceUrl(trace.id);
     console.log(`[langfuse] traceId=${trace.id}${url ? ` url=${url}` : ""}`);
-
-    // Flush early so traces show up immediately in the UI.
     void langfuse?.flushAsync();
-
-    // Best-effort: verify the trace exists and print Langfuse's canonical htmlPath.
-    // This also helps catch "wrong project id" vs "ingestion failed" issues.
-    void (async () => {
-      try {
-        const res = await langfuse?.api.traceGet({ traceId: trace.id } as never);
-        const htmlPath =
-          res && typeof res === "object" && "htmlPath" in res
-            ? (res as { htmlPath?: unknown }).htmlPath
-            : null;
-        if (typeof htmlPath === "string" && htmlPath.length > 0) {
-          const base = env.LANGFUSE_BASE_URL?.replace(/\/+$/, "") ?? "";
-          console.log(`[langfuse] trace htmlPath=${base}${htmlPath}`);
-        } else {
-          console.log("[langfuse] traceGet ok (no htmlPath in response)");
-        }
-      } catch (e) {
-        console.warn("[langfuse] traceGet failed:", e);
-      }
-    })();
   }
 
   // Per-site rate limit
@@ -120,6 +100,34 @@ export async function POST(req: NextRequest) {
     async start(controller) {
       let fullResponse = "";
       let sources: { title: string; url: string; score: number }[] = [];
+      const turnStartMs = Date.now();
+      let firstTokenAtMs: number | null = null;
+
+      const span =
+        trace?.span?.({
+          name: "chat_turn",
+          input: { messages },
+          metadata: { siteId, origin },
+        }) ?? null;
+
+      const generation =
+        span?.generation?.({
+          name: "assistant_response",
+          model: site.modelId,
+          input: { messages },
+          metadata: {
+            temperature: site.temperature,
+          },
+        }) ??
+        trace?.generation?.({
+          name: "assistant_response",
+          model: site.modelId,
+          input: { messages },
+          metadata: {
+            temperature: site.temperature,
+          },
+        }) ??
+        null;
 
       const send = (data: string) => {
         controller.enqueue(encoder.encode(`data: ${data}\n\n`));
@@ -146,9 +154,9 @@ export async function POST(req: NextRequest) {
       };
 
       try {
-        const debug: Record<string, unknown>[] = [];
         for await (const event of ragStream(site, messages)) {
           if (event.type === "token") {
+            if (firstTokenAtMs === null) firstTokenAtMs = Date.now();
             fullResponse += event.content;
             send(JSON.stringify({ type: "token", content: event.content }));
           } else if (event.type === "sources") {
@@ -156,26 +164,33 @@ export async function POST(req: NextRequest) {
             sources = event.sources;
           } else if (event.type === "out_of_scope") {
             // Legacy event type (kept for compatibility). We no longer hard-block answering.
-            debug.push({ type: "out_of_scope", reason: event.reason ?? null });
-            if (trace) {
-              try {
-                trace.update({ metadata: { debug } });
-                void langfuse?.flushAsync();
-              } catch {}
-            }
+            span?.event?.({
+              name: "out_of_scope",
+              level: "WARNING",
+              metadata: { reason: event.reason ?? null },
+            });
           } else if (event.type === "debug") {
-            debug.push({ stage: event.stage, ...event.data });
-            if (trace) {
-              try {
-                trace.update({ metadata: { debug } });
-              } catch {}
-            }
+            span?.event?.({
+              name: event.stage,
+              level: "DEBUG",
+              metadata: event.data,
+            });
+          } else if (event.type === "error") {
+            span?.event?.({
+              name: "rag_error",
+              level: "ERROR",
+              metadata: { message: event.message },
+            });
           }
         }
       } catch (err) {
         const msg = "Sorry, something went wrong. Please try again.";
         send(JSON.stringify({ type: "error", message: msg }));
         console.error("[chat] stream error:", err);
+        generation?.end?.({
+          statusMessage: msg,
+          level: "ERROR",
+        } as never);
       } finally {
         // Only surface sources that the model actually referenced by page title.
         const usedSources = sources.length ? filterSourcesByUsage(fullResponse, sources) : [];
@@ -188,6 +203,41 @@ export async function POST(req: NextRequest) {
 
         send("[DONE]");
         controller.close();
+
+        const endMs = Date.now();
+        const latencySec = (endMs - turnStartMs) / 1000;
+        const ttftSec =
+          firstTokenAtMs === null ? null : (firstTokenAtMs - turnStartMs) / 1000;
+        // Best-effort token estimates (we don't currently get usage from streamed OpenRouter responses).
+        const estInputTokens = Math.max(
+          0,
+          Math.round(JSON.stringify(messages).length / 4)
+        );
+        const estOutputTokens = Math.max(0, Math.round(fullResponse.length / 4));
+        const tokensPerSecond =
+          latencySec > 0 ? estOutputTokens / latencySec : null;
+
+        generation?.end?.({
+          output: fullResponse,
+          metadata: {
+            sources,
+            latency: latencySec,
+            timeToFirstToken: ttftSec,
+            tokensPerSecond,
+            inputTokens: estInputTokens,
+            outputTokens: estOutputTokens,
+            totalTokens: estInputTokens + estOutputTokens,
+          },
+          level: "DEFAULT",
+        } as never);
+        span?.end?.({
+          metadata: {
+            sources,
+            latency: latencySec,
+            timeToFirstToken: ttftSec,
+          },
+        } as never);
+        void langfuse?.flushAsync();
 
         // Persist async (fire and forget)
         void (async () => {
@@ -224,23 +274,6 @@ export async function POST(req: NextRequest) {
             await db.analyticsEvent.create({
               data: { siteId, type: "message" },
             });
-
-            // Langfuse (best-effort)
-            if (trace) {
-              try {
-                trace.update({
-                  sessionId: resolvedSessionId,
-                  output: fullResponse,
-                  metadata: {
-                    sources,
-                  },
-                });
-                // Don't block response lifecycle on ingestion
-                void langfuse?.flushAsync();
-              } catch (e) {
-                console.warn("[langfuse] trace update failed:", e);
-              }
-            }
           } catch (e) {
             console.error("[chat] persist error:", e);
           }
