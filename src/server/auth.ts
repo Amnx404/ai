@@ -20,7 +20,14 @@ declare module "next-auth" {
   }
 }
 
-const resend = new Resend(env.RESEND_API_KEY ?? "re_placeholder");
+function getResendClient() {
+  const key = env.RESEND_API_KEY;
+  if (!key) return null;
+  return new Resend(key);
+}
+
+const magicLinkFrom =
+  env.RESEND_FROM ?? "RoboRacer <noreply@roboracer.ai>";
 
 export const authOptions: NextAuthOptions = {
   callbacks: {
@@ -36,14 +43,20 @@ export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(db) as NextAuthOptions["adapter"],
   providers: [
     EmailProvider({
-      from: "noreply@roboracer.ai",
+      from: magicLinkFrom,
       sendVerificationRequest: async ({ identifier, url }) => {
         if (env.NODE_ENV === "development") {
           console.log(`\n[DEV] Magic link for ${identifier}:\n${url}\n`);
           return;
         }
-        await resend.emails.send({
-          from: "RoboRacer <noreply@roboracer.ai>",
+        const resend = getResendClient();
+        if (!resend) {
+          throw new Error(
+            "RESEND_API_KEY is not set. Add it in Railway (Variables) to send magic links.",
+          );
+        }
+        const { error } = await resend.emails.send({
+          from: magicLinkFrom,
           to: identifier,
           subject: "Sign in to RoboRacer",
           html: `
@@ -59,6 +72,17 @@ export const authOptions: NextAuthOptions = {
             </div>
           `,
         });
+        if (error) {
+          console.error("[auth] Resend rejected magic link email:", error);
+          const msg =
+            typeof error === "object" &&
+            error !== null &&
+            "message" in error &&
+            typeof (error as { message: unknown }).message === "string"
+              ? (error as { message: string }).message
+              : "Resend could not send the email (check API key and domain).";
+          throw new Error(msg);
+        }
       },
     }),
   ],

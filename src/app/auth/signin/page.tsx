@@ -7,13 +7,25 @@ export default function SignInPage() {
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!email) return;
     setLoading(true);
-    await signIn("email", { email, callbackUrl: "/dashboard", redirect: false });
+    setError(null);
+    const result = await signIn("email", {
+      email,
+      callbackUrl: "/dashboard",
+      redirect: false,
+    });
     setLoading(false);
+    if (result?.error) {
+      setError(
+        "We could not send the sign-in email. If you are the admin, check Resend (API key and verified sender domain) and server logs.",
+      );
+      return;
+    }
     setSent(true);
   }
 
@@ -32,7 +44,19 @@ export default function SignInPage() {
           </p>
         </div>
 
-        {sent ? (
+        {error ? (
+          <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-center">
+            <p className="font-medium text-red-800">Something went wrong</p>
+            <p className="mt-1 text-sm text-red-700">{error}</p>
+            <button
+              type="button"
+              onClick={() => setError(null)}
+              className="mt-4 text-sm font-medium text-red-800 underline"
+            >
+              Try again
+            </button>
+          </div>
+        ) : sent ? (
           <div className="rounded-xl border border-green-200 bg-green-50 p-5 text-center">
             <p className="font-medium text-green-800">Check your email!</p>
             <p className="mt-1 text-sm text-green-600">
