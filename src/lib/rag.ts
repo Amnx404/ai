@@ -159,8 +159,8 @@ function buildSystemPrompt(
 
   const scopeInstruction =
     site.allowedTopics.length > 0
-      ? `You ONLY answer questions about: ${site.allowedTopics.join(", ")}. For out-of-scope questions, politely explain what you can help with.`
-      : "Answer only based on the provided context. Do not use external knowledge.";
+      ? `You ONLY answer questions about: ${site.allowedTopics.join(", ")}. For out-of-scope questions, politely explain what you can help with, and try to think about the question from the user's perspective and the website's content.`
+      : "Answer only based on the provided context. Do not use external knowledge. Try to think about the question from the user's perspective and the website's content.";
 
   return `You are a helpful assistant for ${site.title}.
 
@@ -173,8 +173,9 @@ RULES:
 - Write in plain conversational text. Do NOT use Markdown (no headings, bullet lists, bold/italic, or code fences).
 - Do NOT cite sources as numbers like [1] or (1).
 - When you rely on information from a source, mention the page title with its URL naturally in the sentence (e.g. "According to the rules page..."), as shown below.
-- URLs will be rendered as clickable links in the UI. To cite, use this exact format: [[link text|https://example.com/path]]
+- URLs will be rendered as clickable links in the UI. To cite, use this exact format: [[link text|https://example.com/path]]. STRICTLY FOLLOW THIS FORMAT.
 - Keep responses concise and helpful. End with a short, friendly follow-up question when appropriate.
+- You can always use the website's content to answer the question and can also touch around to be helpful if the exact answer is not apparant.
 
 CONTEXT:
 ${contextBlock}`;

@@ -8,6 +8,15 @@ export default {
       fontFamily: {
         sans: ["var(--font-geist-sans)", ...fontFamily.sans],
       },
+      keyframes: {
+        "kb-step-sweep": {
+          "0%": { transform: "translateX(-120%)" },
+          "100%": { transform: "translateX(220%)" },
+        },
+      },
+      animation: {
+        "kb-step-sweep": "kb-step-sweep 1.75s ease-in-out infinite",
+      },
     },
   },
   plugins: [],

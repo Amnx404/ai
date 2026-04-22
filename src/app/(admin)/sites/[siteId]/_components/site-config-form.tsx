@@ -30,8 +30,19 @@ export function SiteConfigForm({
   const normalizeHttps = (raw: string) => {
     const s = raw.trim();
     if (!s) return "";
-    if (/^https?:\/\//i.test(s)) return s;
-    return `https://${s}`;
+
+    // If the user pasted arbitrary text, extract the first URL-looking substring.
+    // Examples:
+    // - "docs: https://example.com/foo" -> "https://example.com/foo"
+    // - "http://example.com" -> "https://example.com"
+    const m = s.match(/https?:\/\/[^\s"'<>]+/i);
+    const candidate = (m?.[0] ?? s)
+      // Common trailing punctuation when pasting from sentences.
+      .replace(/[),.;]+$/g, "");
+
+    if (/^https:\/\//i.test(candidate)) return candidate;
+    if (/^http:\/\//i.test(candidate)) return candidate.replace(/^http:\/\//i, "https://");
+    return `https://${candidate}`;
   };
 
   const baseOrigin = (raw: string) => {
@@ -181,6 +192,7 @@ export function SiteConfigForm({
   );
   const [kbError, setKbError] = useState<string>("");
   const [kbLog, setKbLog] = useState<string>("");
+  const [kbErrorPhase, setKbErrorPhase] = useState<"scrape" | "prepare" | "upload" | null>(null);
 
   const updateSite = api.sites.update.useMutation({
     onSuccess: () => {
@@ -279,6 +291,7 @@ export function SiteConfigForm({
   async function kbScrape() {
     setKbError("");
     setKbLog("");
+    setKbErrorPhase(null);
     setKbStep("scrape");
     try {
       const scrape = {
@@ -312,6 +325,7 @@ export function SiteConfigForm({
       return runId;
     } catch (e: any) {
       console.warn("KB scrape failed", e);
+      setKbErrorPhase("scrape");
       setKbStep("error");
       setKbError("Something went wrong on our side.");
       setKbLog(
@@ -338,6 +352,7 @@ export function SiteConfigForm({
       setKbLog(JSON.stringify(json, null, 2));
     } catch (e: any) {
       console.warn("KB prepare failed", e);
+      setKbErrorPhase("prepare");
       setKbStep("error");
       setKbError("Something went wrong on our side.");
       setKbLog(
@@ -375,6 +390,7 @@ export function SiteConfigForm({
       router.refresh();
     } catch (e: any) {
       console.warn("KB upload failed", e);
+      setKbErrorPhase("upload");
       setKbStep("error");
       setKbError("Something went wrong on our side.");
       setKbLog(
@@ -388,16 +404,11 @@ export function SiteConfigForm({
 
   async function runKbPipeline() {
     setKbError("");
+    setKbErrorPhase(null);
     const runId = await kbScrape();
     await kbPrepare(runId);
     await kbUpload(runId);
   }
-
-  const progress = {
-    scrape: kbStep === "scrape" || kbStep === "prepare" || kbStep === "upload" || kbStep === "done",
-    prepare: kbStep === "prepare" || kbStep === "upload" || kbStep === "done",
-    upload: kbStep === "upload" || kbStep === "done",
-  };
 
   const tabDone = useMemo(() => {
     const branding = form.name.trim().length > 0 && form.primaryUrl.trim().length > 0;
@@ -705,21 +716,23 @@ export function SiteConfigForm({
               <div className="mt-5 grid grid-cols-3 gap-2">
                 <ProgressStep
                   label="Scrape"
-                  active={kbStep === "scrape"}
-                  done={progress.scrape}
-                  error={kbStep === "error"}
+                  processing={kbStep === "scrape"}
+                  completed={
+                    kbStep === "prepare" || kbStep === "upload" || kbStep === "done"
+                  }
+                  error={kbStep === "error" && kbErrorPhase === "scrape"}
                 />
                 <ProgressStep
                   label="Prepare"
-                  active={kbStep === "prepare"}
-                  done={progress.prepare}
-                  error={kbStep === "error"}
+                  processing={kbStep === "prepare"}
+                  completed={kbStep === "upload" || kbStep === "done"}
+                  error={kbStep === "error" && kbErrorPhase === "prepare"}
                 />
                 <ProgressStep
                   label="Upload"
-                  active={kbStep === "upload"}
-                  done={progress.upload}
-                  error={kbStep === "error"}
+                  processing={kbStep === "upload"}
+                  completed={kbStep === "done"}
+                  error={kbStep === "error" && kbErrorPhase === "upload"}
                 />
               </div>
 
@@ -745,22 +758,20 @@ export function SiteConfigForm({
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block text-xs font-medium text-gray-600">Seed URLs</label>
-                  <textarea
+                  <UrlListInput
                     value={form.scrapeSeedUrls}
-                    onChange={(e) => setForm({ ...form, scrapeSeedUrls: e.target.value })}
-                    rows={4}
-                    className={`${inputCls} resize-none font-mono text-xs`}
                     placeholder="https://example.com/docs"
+                    normalize={normalizeHttps}
+                    onChange={(next) => setForm({ ...form, scrapeSeedUrls: next })}
                   />
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-gray-600">Allowed prefixes</label>
-                  <textarea
+                  <UrlListInput
                     value={form.scrapeAllowedPrefixes}
-                    onChange={(e) => setForm({ ...form, scrapeAllowedPrefixes: e.target.value })}
-                    rows={4}
-                    className={`${inputCls} resize-none font-mono text-xs`}
                     placeholder="https://example.com/docs/"
+                    normalize={normalizeHttps}
+                    onChange={(next) => setForm({ ...form, scrapeAllowedPrefixes: next })}
                   />
                 </div>
               </div>
@@ -951,25 +962,181 @@ export function SiteConfigForm({
 
 function ProgressStep({
   label,
-  active,
-  done,
+  processing,
+  completed,
   error,
 }: {
   label: string;
-  active: boolean;
-  done: boolean;
+  processing: boolean;
+  completed: boolean;
   error?: boolean;
 }) {
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2">
+    <div
+      className={`relative flex min-h-[2.5rem] items-center gap-2 overflow-hidden rounded-lg border px-3 py-2 ${
+        error ? "border-red-200 bg-red-50/80" : "border-gray-200 bg-white"
+      }`}
+    >
+      {processing ? (
+        <>
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 bg-gradient-to-r from-emerald-100/0 via-emerald-200/55 to-emerald-100/0"
+          />
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-y-0 -left-1/2 w-1/2 bg-gradient-to-r from-transparent via-emerald-300/35 to-transparent animate-kb-step-sweep"
+          />
+        </>
+      ) : null}
       <span
-        className={`h-2.5 w-2.5 rounded-full ${
-          error ? "bg-red-500" : done ? "bg-green-500" : active ? "bg-indigo-500" : "bg-gray-300"
+        className={`relative z-[1] h-2.5 w-2.5 shrink-0 rounded-full ${
+          error ? "bg-red-500" : completed ? "bg-emerald-500" : "bg-gray-300"
         }`}
       />
-      <span className={`text-xs font-medium ${active ? "text-indigo-700" : "text-gray-700"}`}>
+      <span
+        className={`relative z-[1] text-xs font-medium ${
+          processing ? "text-emerald-900" : error ? "text-red-800" : "text-gray-700"
+        }`}
+      >
         {label}
       </span>
+    </div>
+  );
+}
+
+function UrlListInput({
+  value,
+  onChange,
+  placeholder,
+  normalize,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  placeholder?: string;
+  normalize: (raw: string) => string;
+}) {
+  const [draft, setDraft] = useState("");
+  const [error, setError] = useState<string>("");
+
+  const items = useMemo(() => {
+    return value
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }, [value]);
+
+  const shouldScroll = items.length > 3;
+
+  const extractAllNormalized = (raw: string) => {
+    const s = raw.trim();
+    if (!s) return [];
+    const matches = s.match(/https?:\/\/[^\s"'<>]+/gi) ?? [];
+    const candidates =
+      matches.length > 0
+        ? matches
+        : [
+            // Fall back to single entry behavior when there's no explicit scheme in the string.
+            s,
+          ];
+
+    return candidates
+      .map((c) => normalize(c))
+      .map((c) => c.replace(/[),.;]+$/g, ""))
+      .filter(Boolean);
+  };
+
+  const commit = (raw: string) => {
+    const normalized = extractAllNormalized(raw);
+    if (!normalized.length) return;
+
+    for (const n of normalized) {
+      try {
+        const u = new URL(n);
+        if (u.protocol !== "https:") {
+          setError("Must be an https URL.");
+          return;
+        }
+      } catch {
+        setError("Invalid URL.");
+        return;
+      }
+    }
+
+    setError("");
+    const nextItems = Array.from(new Set([...items, ...normalized]));
+    onChange(nextItems.join("\n"));
+    setDraft("");
+  };
+
+  const remove = (idx: number) => {
+    const nextItems = items.filter((_, i) => i !== idx);
+    onChange(nextItems.join("\n"));
+  };
+
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-2">
+      <div className="flex gap-2">
+        <input
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            if (error) setError("");
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit(draft);
+            }
+          }}
+          onBlur={() => {
+            if (!draft.trim()) return;
+            // Helpful: normalize on blur but don't auto-add unless it's valid.
+            const n = normalize(draft);
+            if (n !== draft) setDraft(n);
+          }}
+          className={`${inputCls} font-mono text-xs`}
+          placeholder={placeholder}
+        />
+        <button
+          type="button"
+          onClick={() => commit(draft)}
+          className="shrink-0 rounded-xl bg-gray-900 px-3 py-2 text-xs font-semibold text-white hover:bg-gray-800"
+        >
+          Add
+        </button>
+      </div>
+
+      {error ? <p className="mt-2 text-xs font-medium text-red-600">{error}</p> : null}
+
+      {items.length ? (
+        <div
+          className={`mt-2 space-y-1 ${
+            shouldScroll ? "max-h-28 overflow-auto pr-1" : ""
+          }`}
+        >
+          {items.map((u, idx) => (
+            <div
+              key={`${u}-${idx}`}
+              className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5"
+            >
+              <span className="min-w-0 flex-1 truncate font-mono text-xs text-gray-800">
+                {u}
+              </span>
+              <button
+                type="button"
+                onClick={() => remove(idx)}
+                className="rounded-lg px-2 py-1 text-xs font-semibold text-gray-600 hover:bg-white hover:text-gray-900"
+                aria-label={`Remove ${u}`}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-2 text-xs text-gray-400">Add one or more URLs.</p>
+      )}
     </div>
   );
 }
