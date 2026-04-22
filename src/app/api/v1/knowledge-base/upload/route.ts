@@ -59,115 +59,126 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const user = await db.user.findUnique({
-    where: { id: session.user.id },
-    select: { orgId: true },
-  });
-  const site = await db.site.findFirst({
-    where: { id: parsed.data.siteId, orgId: user?.orgId ?? "", isActive: true },
-  });
-  if (!site) return NextResponse.json({ error: "Site not found" }, { status: 404 });
-
-  const defaultPrefix = site.livePineconePrefix?.trim() || `${site.id}-live-v-`;
-  const livePrefix = parsed.data.livePrefix?.trim() || defaultPrefix;
-
-  // Persist prefix (editable in UI)
-  if (!site.livePineconePrefix || site.livePineconePrefix.trim() !== livePrefix) {
-    await db.site.update({
-      where: { id: site.id },
-      data: { livePineconePrefix: livePrefix },
-    });
-  }
-
-  const status = await scraperUpload({
-    run_id: parsed.data.runId,
-    live_prefix: livePrefix,
-    vector_dim: 1024,
-    text_source: "fine",
-    embed_model: env.PINECONE_EMBED_MODEL ?? "llama-text-embed-v2",
-    batch_size: parsed.data.batchSize ?? 200,
-    embed_batch_size: parsed.data.embedBatchSize ?? 64,
-    embed_workers: parsed.data.embedWorkers ?? 1,
-    max_records: parsed.data.maxRecords ?? null,
-  });
-
-  // /upload now returns these top-level fields.
-  const liveNsFromTopLevel =
-    typeof status.live_namespace === "string" && status.live_namespace.trim()
-      ? status.live_namespace.trim()
-      : null;
-  const previousLiveNsFromTopLevel =
-    typeof status.previous_live_namespace === "string" &&
-    status.previous_live_namespace.trim()
-      ? status.previous_live_namespace.trim()
-      : null;
-
-  // Best effort: fetch status to get final outputs for live namespace
-  let finalOutputs: Record<string, unknown> | undefined = undefined;
   try {
-    const finalStatus = await scraperRunStatus(status.run_id);
-    if (finalStatus.outputs && typeof finalStatus.outputs === "object") {
-      finalOutputs = finalStatus.outputs as Record<string, unknown>;
-    }
-  } catch {
-    // ignore
-  }
-
-  const outputs =
-    finalOutputs ??
-    (status.outputs && typeof status.outputs === "object"
-      ? (status.outputs as Record<string, unknown>)
-      : undefined);
-
-  const liveNs = liveNsFromTopLevel ?? pickLiveNamespace(outputs);
-  const liveVersion = liveNs ? pickLiveVersionFromNamespace(liveNs) : null;
-
-  if (liveNs) {
-    await db.site.update({
-      where: { id: site.id },
-      data: {
-        livePineconeNs: liveNs,
-        ...(liveVersion ? { liveVersion } : {}),
-      },
+    const user = await db.user.findUnique({
+      where: { id: session.user.id },
+      select: { orgId: true },
     });
+    const site = await db.site.findFirst({
+      where: { id: parsed.data.siteId, orgId: user?.orgId ?? "", isActive: true },
+    });
+    if (!site) return NextResponse.json({ error: "Site not found" }, { status: 404 });
+
+    const siteLivePrefix = (site as unknown as { livePineconePrefix?: string | null })
+      .livePineconePrefix;
+    const defaultPrefix = siteLivePrefix?.trim() || `${site.id}-live-v-`;
+    const livePrefix = parsed.data.livePrefix?.trim() || defaultPrefix;
+
+    // Persist prefix (editable in UI)
+    if (!siteLivePrefix || siteLivePrefix.trim() !== livePrefix) {
+      await (db.site.update as unknown as (args: any) => Promise<unknown>)({
+        where: { id: site.id },
+        data: { livePineconePrefix: livePrefix },
+      });
+    }
+
+    const status = await scraperUpload({
+      run_id: parsed.data.runId,
+      live_prefix: livePrefix,
+      vector_dim: 1024,
+      text_source: "fine",
+      embed_model: env.PINECONE_EMBED_MODEL ?? "llama-text-embed-v2",
+      batch_size: parsed.data.batchSize ?? 200,
+      embed_batch_size: parsed.data.embedBatchSize ?? 64,
+      embed_workers: parsed.data.embedWorkers ?? 1,
+      max_records: parsed.data.maxRecords ?? null,
+    });
+
+    // /upload now returns these top-level fields.
+    const liveNsFromTopLevel =
+      typeof status.live_namespace === "string" && status.live_namespace.trim()
+        ? status.live_namespace.trim()
+        : null;
+    const previousLiveNsFromTopLevel =
+      typeof status.previous_live_namespace === "string" &&
+      status.previous_live_namespace.trim()
+        ? status.previous_live_namespace.trim()
+        : null;
+
+    // Best effort: fetch status to get final outputs for live namespace
+    let finalOutputs: Record<string, unknown> | undefined = undefined;
+    try {
+      const finalStatus = await scraperRunStatus(status.run_id);
+      if (finalStatus.outputs && typeof finalStatus.outputs === "object") {
+        finalOutputs = finalStatus.outputs as Record<string, unknown>;
+      }
+    } catch {
+      // ignore
+    }
+
+    const outputs =
+      finalOutputs ??
+      (status.outputs && typeof status.outputs === "object"
+        ? (status.outputs as Record<string, unknown>)
+        : undefined);
+
+    const liveNs = liveNsFromTopLevel ?? pickLiveNamespace(outputs);
+    const liveVersion = liveNs ? pickLiveVersionFromNamespace(liveNs) : null;
+
+    if (liveNs) {
+      await db.site.update({
+        where: { id: site.id },
+        data: {
+          livePineconeNs: liveNs,
+          ...(liveVersion ? { liveVersion } : {}),
+        },
+      });
+    }
+
+    await db.knowledgeBaseRun
+      .upsert({
+        where: { runId: status.run_id },
+        create: {
+          siteId: site.id,
+          runId: status.run_id,
+          ok: status.ok,
+          step: status.step,
+          startedAt: status.started_at ? new Date(status.started_at) : null,
+          finishedAt: status.finished_at ? new Date(status.finished_at) : null,
+          message: status.message ?? null,
+          params: ({ upload: parsed.data } as unknown) as Prisma.InputJsonValue,
+          outputs: (status.outputs ?? undefined) as Prisma.InputJsonValue | undefined,
+          logs: (status.logs ?? undefined) as Prisma.InputJsonValue | undefined,
+        },
+        update: {
+          ok: status.ok,
+          step: status.step,
+          startedAt: status.started_at ? new Date(status.started_at) : undefined,
+          finishedAt: status.finished_at ? new Date(status.finished_at) : undefined,
+          message: status.message ?? undefined,
+          outputs: (status.outputs ?? undefined) as Prisma.InputJsonValue | undefined,
+          logs: (status.logs ?? undefined) as Prisma.InputJsonValue | undefined,
+        },
+      })
+      .catch(() => null);
+
+    return NextResponse.json(
+      {
+        ...status,
+        livePrefix,
+        liveNamespace: liveNs,
+        previousLiveNamespace: previousLiveNsFromTopLevel,
+        liveVersion,
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+  } catch (e: unknown) {
+    const message =
+      e instanceof Error ? e.message : typeof e === "string" ? e : "Upload failed";
+    return NextResponse.json(
+      { error: message },
+      { status: 502, headers: { "Cache-Control": "no-store" } },
+    );
   }
-
-  await db.knowledgeBaseRun
-    .upsert({
-      where: { runId: status.run_id },
-      create: {
-        siteId: site.id,
-        runId: status.run_id,
-        ok: status.ok,
-        step: status.step,
-        startedAt: status.started_at ? new Date(status.started_at) : null,
-        finishedAt: status.finished_at ? new Date(status.finished_at) : null,
-        message: status.message ?? null,
-        params: ({ upload: parsed.data } as unknown) as Prisma.InputJsonValue,
-        outputs: (status.outputs ?? undefined) as Prisma.InputJsonValue | undefined,
-        logs: (status.logs ?? undefined) as Prisma.InputJsonValue | undefined,
-      },
-      update: {
-        ok: status.ok,
-        step: status.step,
-        startedAt: status.started_at ? new Date(status.started_at) : undefined,
-        finishedAt: status.finished_at ? new Date(status.finished_at) : undefined,
-        message: status.message ?? undefined,
-        outputs: (status.outputs ?? undefined) as Prisma.InputJsonValue | undefined,
-        logs: (status.logs ?? undefined) as Prisma.InputJsonValue | undefined,
-      },
-    })
-    .catch(() => null);
-
-  return NextResponse.json(
-    {
-      ...status,
-      livePrefix,
-      liveNamespace: liveNs,
-      previousLiveNamespace: previousLiveNsFromTopLevel,
-      liveVersion,
-    },
-    { headers: { "Cache-Control": "no-store" } },
-  );
 }
 

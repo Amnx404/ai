@@ -262,6 +262,20 @@ export function SiteConfigForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form]);
 
+  async function readResponseJson(res: Response) {
+    const text = await res.text().catch(() => "");
+    if (!text) return null;
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      // Likely an HTML error page or otherwise non-JSON response.
+      const preview = text.slice(0, 400).trim();
+      throw new Error(
+        `Request failed (${res.status} ${res.statusText}) with non-JSON response: ${preview || "<empty>"}`,
+      );
+    }
+  }
+
   async function kbScrape() {
     setKbError("");
     setKbLog("");
@@ -287,14 +301,24 @@ export function SiteConfigForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ siteId: site.id, scrape }),
       });
-      const json = (await res.json()) as any;
-      if (!res.ok) throw new Error(json?.error?.message ?? json?.error ?? "Scrape failed");
-      setKbRunId(json.run_id);
+      const json = (await readResponseJson(res)) as any;
+      if (!res.ok) {
+        throw new Error(json?.error?.message ?? json?.error ?? `Scrape failed (${res.status})`);
+      }
+      const runId = json?.run_id as string | undefined;
+      if (!runId) throw new Error("Scrape succeeded but no run_id returned");
+      setKbRunId(runId);
       setKbLog(JSON.stringify(json, null, 2));
-      return json.run_id as string;
+      return runId;
     } catch (e: any) {
+      console.warn("KB scrape failed", e);
       setKbStep("error");
-      setKbError(e?.message ?? "Scrape failed");
+      setKbError("Something went wrong on our side.");
+      setKbLog(
+        typeof e?.message === "string" && e.message.trim()
+          ? e.message
+          : JSON.stringify(e, null, 2),
+      );
       throw e;
     }
   }
@@ -307,12 +331,20 @@ export function SiteConfigForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ siteId: site.id, runId }),
       });
-      const json = (await res.json()) as any;
-      if (!res.ok) throw new Error(json?.error?.message ?? json?.error ?? "Prepare failed");
+      const json = (await readResponseJson(res)) as any;
+      if (!res.ok) {
+        throw new Error(json?.error?.message ?? json?.error ?? `Prepare failed (${res.status})`);
+      }
       setKbLog(JSON.stringify(json, null, 2));
     } catch (e: any) {
+      console.warn("KB prepare failed", e);
       setKbStep("error");
-      setKbError(e?.message ?? "Prepare failed");
+      setKbError("Something went wrong on our side.");
+      setKbLog(
+        typeof e?.message === "string" && e.message.trim()
+          ? e.message
+          : JSON.stringify(e, null, 2),
+      );
       throw e;
     }
   }
@@ -334,14 +366,22 @@ export function SiteConfigForm({
           embedWorkers: 1,
         }),
       });
-      const json = (await res.json()) as any;
-      if (!res.ok) throw new Error(json?.error?.message ?? json?.error ?? "Upload failed");
+      const json = (await readResponseJson(res)) as any;
+      if (!res.ok) {
+        throw new Error(json?.error?.message ?? json?.error ?? `Upload failed (${res.status})`);
+      }
       setKbLog(JSON.stringify(json, null, 2));
       setKbStep("done");
       router.refresh();
     } catch (e: any) {
+      console.warn("KB upload failed", e);
       setKbStep("error");
-      setKbError(e?.message ?? "Upload failed");
+      setKbError("Something went wrong on our side.");
+      setKbLog(
+        typeof e?.message === "string" && e.message.trim()
+          ? e.message
+          : JSON.stringify(e, null, 2),
+      );
       throw e;
     }
   }
@@ -663,9 +703,24 @@ export function SiteConfigForm({
               </div>
 
               <div className="mt-5 grid grid-cols-3 gap-2">
-                <ProgressStep label="Scrape" active={kbStep === "scrape"} done={progress.scrape} />
-                <ProgressStep label="Prepare" active={kbStep === "prepare"} done={progress.prepare} />
-                <ProgressStep label="Upload" active={kbStep === "upload"} done={progress.upload} />
+                <ProgressStep
+                  label="Scrape"
+                  active={kbStep === "scrape"}
+                  done={progress.scrape}
+                  error={kbStep === "error"}
+                />
+                <ProgressStep
+                  label="Prepare"
+                  active={kbStep === "prepare"}
+                  done={progress.prepare}
+                  error={kbStep === "error"}
+                />
+                <ProgressStep
+                  label="Upload"
+                  active={kbStep === "upload"}
+                  done={progress.upload}
+                  error={kbStep === "error"}
+                />
               </div>
 
               {kbError ? (
@@ -898,16 +953,18 @@ function ProgressStep({
   label,
   active,
   done,
+  error,
 }: {
   label: string;
   active: boolean;
   done: boolean;
+  error?: boolean;
 }) {
   return (
     <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2">
       <span
         className={`h-2.5 w-2.5 rounded-full ${
-          done ? "bg-green-500" : active ? "bg-indigo-500" : "bg-gray-300"
+          error ? "bg-red-500" : done ? "bg-green-500" : active ? "bg-indigo-500" : "bg-gray-300"
         }`}
       />
       <span className={`text-xs font-medium ${active ? "text-indigo-700" : "text-gray-700"}`}>
