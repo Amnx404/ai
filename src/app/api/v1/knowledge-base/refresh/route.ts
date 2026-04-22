@@ -142,8 +142,7 @@ export async function POST(req: NextRequest) {
   const scraped = await scraperScrape(scrapeReq as never);
 
   // Upsert run record (best effort)
-  await db.knowledgeBaseRun
-    .create({
+  await (db.knowledgeBaseRun.create as unknown as (args: any) => Promise<unknown>)({
       data: {
         siteId,
         runId: scraped.run_id,
@@ -153,11 +152,11 @@ export async function POST(req: NextRequest) {
         finishedAt: scraped.finished_at ? new Date(scraped.finished_at) : null,
         message: scraped.message ?? null,
         params: ({ scrape: scrapeReq } as unknown) as Prisma.InputJsonValue,
+        response: (scraped as unknown) as Prisma.InputJsonValue,
         outputs: (scraped.outputs ?? undefined) as Prisma.InputJsonValue | undefined,
         logs: (scraped.logs ?? undefined) as Prisma.InputJsonValue | undefined,
       },
-    })
-    .catch(() => null);
+    }).catch(() => null);
 
   // 2) Prepare (finetune on)
   const prepared = await scraperPrepare({
@@ -167,20 +166,32 @@ export async function POST(req: NextRequest) {
     finetune_model: env.SCRAPER_FINETUNE_MODEL ?? null,
     finetune_prompt: env.FINETUNE_PROMPT ?? "",
   });
-  await db.knowledgeBaseRun
-    .update({
-      where: { runId: scraped.run_id },
-      data: {
-        ok: prepared.ok,
-        step: prepared.step,
-        startedAt: prepared.started_at ? new Date(prepared.started_at) : undefined,
-        finishedAt: prepared.finished_at ? new Date(prepared.finished_at) : undefined,
-        message: prepared.message ?? undefined,
-        outputs: (prepared.outputs ?? undefined) as Prisma.InputJsonValue | undefined,
-        logs: (prepared.logs ?? undefined) as Prisma.InputJsonValue | undefined,
-      },
-    })
-    .catch(() => null);
+  await (db.knowledgeBaseRun.upsert as unknown as (args: any) => Promise<unknown>)({
+    where: { runId_step: { runId: scraped.run_id, step: "prepare" } },
+    create: {
+      siteId,
+      runId: scraped.run_id,
+      ok: prepared.ok,
+      step: "prepare",
+      startedAt: prepared.started_at ? new Date(prepared.started_at) : null,
+      finishedAt: prepared.finished_at ? new Date(prepared.finished_at) : null,
+      message: prepared.message ?? null,
+      params: ({ prepare: { runId: scraped.run_id } } as unknown) as Prisma.InputJsonValue,
+      response: (prepared as unknown) as Prisma.InputJsonValue,
+      outputs: (prepared.outputs ?? undefined) as Prisma.InputJsonValue | undefined,
+      logs: (prepared.logs ?? undefined) as Prisma.InputJsonValue | undefined,
+    },
+    update: {
+      ok: prepared.ok,
+      step: "prepare",
+      startedAt: prepared.started_at ? new Date(prepared.started_at) : undefined,
+      finishedAt: prepared.finished_at ? new Date(prepared.finished_at) : undefined,
+      message: prepared.message ?? undefined,
+      response: (prepared as unknown) as Prisma.InputJsonValue,
+      outputs: (prepared.outputs ?? undefined) as Prisma.InputJsonValue | undefined,
+      logs: (prepared.logs ?? undefined) as Prisma.InputJsonValue | undefined,
+    },
+  }).catch(() => null);
 
   // 3) Upload (use fine-tuned text output)
   const livePrefix =
@@ -196,20 +207,32 @@ export async function POST(req: NextRequest) {
     embed_model: env.PINECONE_EMBED_MODEL ?? "llama-text-embed-v2",
     vector_dim: 1024,
   });
-  await db.knowledgeBaseRun
-    .update({
-      where: { runId: scraped.run_id },
-      data: {
-        ok: uploaded.ok,
-        step: uploaded.step,
-        startedAt: uploaded.started_at ? new Date(uploaded.started_at) : undefined,
-        finishedAt: uploaded.finished_at ? new Date(uploaded.finished_at) : undefined,
-        message: uploaded.message ?? undefined,
-        outputs: (uploaded.outputs ?? undefined) as Prisma.InputJsonValue | undefined,
-        logs: (uploaded.logs ?? undefined) as Prisma.InputJsonValue | undefined,
-      },
-    })
-    .catch(() => null);
+  await (db.knowledgeBaseRun.upsert as unknown as (args: any) => Promise<unknown>)({
+    where: { runId_step: { runId: scraped.run_id, step: "upload" } },
+    create: {
+      siteId,
+      runId: scraped.run_id,
+      ok: uploaded.ok,
+      step: "upload",
+      startedAt: uploaded.started_at ? new Date(uploaded.started_at) : null,
+      finishedAt: uploaded.finished_at ? new Date(uploaded.finished_at) : null,
+      message: uploaded.message ?? null,
+      params: ({ upload: { runId: scraped.run_id, livePrefix } } as unknown) as Prisma.InputJsonValue,
+      response: (uploaded as unknown) as Prisma.InputJsonValue,
+      outputs: (uploaded.outputs ?? undefined) as Prisma.InputJsonValue | undefined,
+      logs: (uploaded.logs ?? undefined) as Prisma.InputJsonValue | undefined,
+    },
+    update: {
+      ok: uploaded.ok,
+      step: "upload",
+      startedAt: uploaded.started_at ? new Date(uploaded.started_at) : undefined,
+      finishedAt: uploaded.finished_at ? new Date(uploaded.finished_at) : undefined,
+      message: uploaded.message ?? undefined,
+      response: (uploaded as unknown) as Prisma.InputJsonValue,
+      outputs: (uploaded.outputs ?? undefined) as Prisma.InputJsonValue | undefined,
+      logs: (uploaded.logs ?? undefined) as Prisma.InputJsonValue | undefined,
+    },
+  }).catch(() => null);
 
   // 4) Wait until finished and then update site's live namespace pointer
   let finalStatus: ApiStatus | null = null;
