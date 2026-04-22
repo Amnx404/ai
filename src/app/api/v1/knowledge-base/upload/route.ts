@@ -69,6 +69,7 @@ export async function POST(req: NextRequest) {
     });
     if (!site) return NextResponse.json({ error: "Site not found" }, { status: 404 });
 
+    const step = "upload" as const;
     const siteLivePrefix = (site as unknown as { livePineconePrefix?: string | null })
       .livePineconePrefix;
     const defaultPrefix = siteLivePrefix?.trim() || `${site.id}-live-v-`;
@@ -82,17 +83,51 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const status = await scraperUpload({
-      run_id: parsed.data.runId,
-      live_prefix: livePrefix,
-      vector_dim: 1024,
-      text_source: "fine",
-      embed_model: env.PINECONE_EMBED_MODEL ?? "llama-text-embed-v2",
-      batch_size: parsed.data.batchSize ?? 200,
-      embed_batch_size: parsed.data.embedBatchSize ?? 64,
-      embed_workers: parsed.data.embedWorkers ?? 1,
-      max_records: parsed.data.maxRecords ?? null,
-    });
+    let status: Awaited<ReturnType<typeof scraperUpload>>;
+    try {
+      status = await scraperUpload({
+        run_id: parsed.data.runId,
+        live_prefix: livePrefix,
+        vector_dim: 1024,
+        text_source: "fine",
+        embed_model: env.PINECONE_EMBED_MODEL ?? "llama-text-embed-v2",
+        batch_size: parsed.data.batchSize ?? 200,
+        embed_batch_size: parsed.data.embedBatchSize ?? 64,
+        embed_workers: parsed.data.embedWorkers ?? 1,
+        max_records: parsed.data.maxRecords ?? null,
+      });
+    } catch (e: unknown) {
+      const message =
+        e instanceof Error ? e.message : typeof e === "string" ? e : "Upload failed";
+      const now = new Date();
+      await (db.knowledgeBaseRun.upsert as unknown as (args: any) => Promise<unknown>)({
+          where: { runId_step: { runId: parsed.data.runId, step } },
+          create: {
+            siteId: site.id,
+            runId: parsed.data.runId,
+            ok: false,
+            step,
+            startedAt: now,
+            finishedAt: now,
+            message,
+            params: ({ upload: parsed.data } as unknown) as Prisma.InputJsonValue,
+            response: ({ error: message } as unknown) as Prisma.InputJsonValue,
+          },
+          update: {
+            ok: false,
+            step,
+            startedAt: now,
+            finishedAt: now,
+            message,
+            params: ({ upload: parsed.data } as unknown) as Prisma.InputJsonValue,
+            response: ({ error: message } as unknown) as Prisma.InputJsonValue,
+          },
+        }).catch(() => null);
+      return NextResponse.json(
+        { error: message },
+        { status: 502, headers: { "Cache-Control": "no-store" } },
+      );
+    }
 
     // /upload now returns these top-level fields.
     const liveNsFromTopLevel =
@@ -135,32 +170,32 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    await db.knowledgeBaseRun
-      .upsert({
-        where: { runId: status.run_id },
+    await (db.knowledgeBaseRun.upsert as unknown as (args: any) => Promise<unknown>)({
+        where: { runId_step: { runId: status.run_id, step } },
         create: {
           siteId: site.id,
           runId: status.run_id,
           ok: status.ok,
-          step: status.step,
+          step,
           startedAt: status.started_at ? new Date(status.started_at) : null,
           finishedAt: status.finished_at ? new Date(status.finished_at) : null,
           message: status.message ?? null,
           params: ({ upload: parsed.data } as unknown) as Prisma.InputJsonValue,
+          response: (status as unknown) as Prisma.InputJsonValue,
           outputs: (status.outputs ?? undefined) as Prisma.InputJsonValue | undefined,
           logs: (status.logs ?? undefined) as Prisma.InputJsonValue | undefined,
         },
         update: {
           ok: status.ok,
-          step: status.step,
+          step,
           startedAt: status.started_at ? new Date(status.started_at) : undefined,
           finishedAt: status.finished_at ? new Date(status.finished_at) : undefined,
           message: status.message ?? undefined,
+          response: (status as unknown) as Prisma.InputJsonValue,
           outputs: (status.outputs ?? undefined) as Prisma.InputJsonValue | undefined,
           logs: (status.logs ?? undefined) as Prisma.InputJsonValue | undefined,
         },
-      })
-      .catch(() => null);
+      }).catch(() => null);
 
     return NextResponse.json(
       {

@@ -111,10 +111,11 @@ model KnowledgeBaseRun {
   id         String   @id @default(cuid())
   siteId     String
   site       Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
-  runId      String   @unique
+  runId      String
   step       String   // "scrape" | "prepare" | "upload" | "status"
   ok         Boolean  @default(false)
   params     Json?
+  response   Json?
   outputs    Json?
   logs       Json?
   message    String?
@@ -123,7 +124,9 @@ model KnowledgeBaseRun {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
+  @@unique([runId, step])
   @@index([siteId, createdAt])
+  @@index([runId])
 }
 
 model ChatSession {

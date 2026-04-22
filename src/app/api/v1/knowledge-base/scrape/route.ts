@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getServerSession } from "next-auth";
+import { randomUUID } from "crypto";
 
 import { authOptions } from "~/server/auth";
 import { db } from "~/server/db";
@@ -44,6 +45,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Site not found" }, { status: 404 });
     }
 
+    const step = "scrape" as const;
+
     // Persist scrapeConfig for the site (so it's visible/editable in UI)
     await db.site.update({
       where: { id: site.id },
@@ -52,28 +55,61 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    const status = await scraperScrape(parsed.data.scrape as never);
+    let status: Awaited<ReturnType<typeof scraperScrape>>;
+    try {
+      status = await scraperScrape(parsed.data.scrape as never);
+    } catch (e: unknown) {
+      const message =
+        e instanceof Error ? e.message : typeof e === "string" ? e : "Scrape failed";
+      const now = new Date();
+      const failureRunId = `fail-${randomUUID()}`;
+      await (db.knowledgeBaseRun.create as unknown as (args: any) => Promise<unknown>)({
+          data: {
+            siteId: site.id,
+            runId: failureRunId,
+            ok: false,
+            step,
+            startedAt: now,
+            finishedAt: now,
+            message,
+            params: ({ scrape: parsed.data.scrape } as unknown) as Prisma.InputJsonValue,
+            response: ({ error: message } as unknown) as Prisma.InputJsonValue,
+          },
+        }).catch(() => null);
+      return NextResponse.json(
+        { error: message },
+        { status: 502, headers: { "Cache-Control": "no-store" } },
+      );
+    }
 
-    await db.knowledgeBaseRun
-      .create({
-        data: {
+    await (db.knowledgeBaseRun.upsert as unknown as (args: any) => Promise<unknown>)({
+        where: { runId_step: { runId: status.run_id, step } },
+        create: {
           siteId: site.id,
           runId: status.run_id,
           ok: status.ok,
-          step: status.step,
+          step,
           startedAt: status.started_at ? new Date(status.started_at) : null,
           finishedAt: status.finished_at ? new Date(status.finished_at) : null,
           message: status.message ?? null,
           params: ({ scrape: parsed.data.scrape } as unknown) as Prisma.InputJsonValue,
+          response: (status as unknown) as Prisma.InputJsonValue,
           outputs: (status.outputs ?? undefined) as Prisma.InputJsonValue | undefined,
           logs: (status.logs ?? undefined) as Prisma.InputJsonValue | undefined,
         },
-      })
-      .catch(() => null);
+        update: {
+          ok: status.ok,
+          step,
+          startedAt: status.started_at ? new Date(status.started_at) : undefined,
+          finishedAt: status.finished_at ? new Date(status.finished_at) : undefined,
+          message: status.message ?? undefined,
+          response: (status as unknown) as Prisma.InputJsonValue,
+          outputs: (status.outputs ?? undefined) as Prisma.InputJsonValue | undefined,
+          logs: (status.logs ?? undefined) as Prisma.InputJsonValue | undefined,
+        },
+      }).catch(() => null);
 
-    return NextResponse.json(status, {
-      headers: { "Cache-Control": "no-store" },
-    });
+    return NextResponse.json(status, { headers: { "Cache-Control": "no-store" } });
   } catch (e: unknown) {
     const message =
       e instanceof Error ? e.message : typeof e === "string" ? e : "Scrape failed";
