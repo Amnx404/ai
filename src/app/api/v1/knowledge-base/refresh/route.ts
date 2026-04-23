@@ -14,6 +14,7 @@ import {
 import { resolvePineconeTarget } from "~/lib/pinecone";
 import { getServerSession } from "next-auth";
 import { authOptions } from "~/server/auth";
+import { normalizeScrapeConfigObject } from "~/lib/scrape-config-normalize";
 
 const bodySchema = z.object({
   siteId: z.string().min(1),
@@ -96,10 +97,9 @@ export async function POST(req: NextRequest) {
     // ignore
   }
 
-  const persistedConfig =
-    (site.scrapeConfig && typeof site.scrapeConfig === "object"
-      ? (site.scrapeConfig as Record<string, unknown>)
-      : null) ?? {};
+  const persistedConfig = normalizeScrapeConfigObject(
+    site.scrapeConfig && typeof site.scrapeConfig === "object" ? site.scrapeConfig : {},
+  );
 
   const seed_urls =
     (Array.isArray((scrape ?? {}).seed_urls)
@@ -132,11 +132,12 @@ export async function POST(req: NextRequest) {
   }
 
   // 1) Scrape
+  const scrapeOverrides = normalizeScrapeConfigObject(scrape ?? {});
   const scrapeReq = {
     seed_urls,
     allowed_prefixes,
-    ...(persistedConfig ?? {}),
-    ...(scrape ?? {}),
+    ...persistedConfig,
+    ...scrapeOverrides,
   } as Record<string, unknown>;
 
   const scraped = await scraperScrape(scrapeReq as never);

@@ -8,6 +8,7 @@ import { db } from "~/server/db";
 import { scraperScrape } from "~/lib/scraper-pipeline";
 import { env } from "~/env.js";
 import { Prisma } from "@prisma/client";
+import { normalizeScrapeConfigObject } from "~/lib/scrape-config-normalize";
 
 const bodySchema = z.object({
   siteId: z.string().min(1),
@@ -47,17 +48,19 @@ export async function POST(req: NextRequest) {
 
     const step = "scrape" as const;
 
+    const scrapePayload = normalizeScrapeConfigObject(parsed.data.scrape) as Record<string, unknown>;
+
     // Persist scrapeConfig for the site (so it's visible/editable in UI)
     await db.site.update({
       where: { id: site.id },
       data: {
-        scrapeConfig: (parsed.data.scrape as unknown) as Prisma.InputJsonValue,
+        scrapeConfig: scrapePayload as Prisma.InputJsonValue,
       },
     });
 
     let status: Awaited<ReturnType<typeof scraperScrape>>;
     try {
-      status = await scraperScrape(parsed.data.scrape as never);
+      status = await scraperScrape(scrapePayload as never);
     } catch (e: unknown) {
       const message =
         e instanceof Error ? e.message : typeof e === "string" ? e : "Scrape failed";
@@ -72,7 +75,7 @@ export async function POST(req: NextRequest) {
             startedAt: now,
             finishedAt: now,
             message,
-            params: ({ scrape: parsed.data.scrape } as unknown) as Prisma.InputJsonValue,
+            params: ({ scrape: scrapePayload } as unknown) as Prisma.InputJsonValue,
             response: ({ error: message } as unknown) as Prisma.InputJsonValue,
           },
         }).catch(() => null);
@@ -92,7 +95,7 @@ export async function POST(req: NextRequest) {
           startedAt: status.started_at ? new Date(status.started_at) : null,
           finishedAt: status.finished_at ? new Date(status.finished_at) : null,
           message: status.message ?? null,
-          params: ({ scrape: parsed.data.scrape } as unknown) as Prisma.InputJsonValue,
+          params: ({ scrape: scrapePayload } as unknown) as Prisma.InputJsonValue,
           response: (status as unknown) as Prisma.InputJsonValue,
           outputs: (status.outputs ?? undefined) as Prisma.InputJsonValue | undefined,
           logs: (status.logs ?? undefined) as Prisma.InputJsonValue | undefined,

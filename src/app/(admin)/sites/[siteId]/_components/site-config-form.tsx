@@ -78,6 +78,15 @@ export function SiteConfigForm({
     return raw as Record<string, unknown>;
   }, [site.scrapeConfig]);
 
+  const persistedInt = (v: unknown): number | null => {
+    if (typeof v === "number" && Number.isFinite(v)) return Math.trunc(v);
+    if (typeof v === "string" && v.trim() !== "") {
+      const n = Number(v.trim());
+      return Number.isFinite(n) ? Math.trunc(n) : null;
+    }
+    return null;
+  };
+
   const [form, setForm] = useState({
     name: site.name,
     primaryColor: site.primaryColor,
@@ -112,22 +121,20 @@ export function SiteConfigForm({
             return "";
           }
         })(),
-    scrapeCoverage:
-      typeof initialScrapeConfig.max_pages === "number"
-        ? Number(initialScrapeConfig.max_pages) <= 10
-          ? "basic"
-          : Number(initialScrapeConfig.max_pages) <= 50
-            ? "wide"
-            : "thorough"
-        : "thorough",
-    scrapeSpeed:
-      typeof initialScrapeConfig.parallel_workers === "number"
-        ? Number(initialScrapeConfig.parallel_workers) <= 3
-          ? "quick"
-          : Number(initialScrapeConfig.parallel_workers) <= 7
-            ? "speedy"
-            : "fastest"
-        : "speedy",
+    scrapeCoverage: (() => {
+      const mp = persistedInt(initialScrapeConfig.max_pages);
+      if (mp === null) return "thorough";
+      if (mp <= 10) return "basic";
+      if (mp <= 50) return "wide";
+      return "thorough";
+    })(),
+    scrapeSpeed: (() => {
+      const w = persistedInt(initialScrapeConfig.parallel_workers);
+      if (w === null) return "speedy";
+      if (w <= 3) return "quick";
+      if (w <= 7) return "speedy";
+      return "fastest";
+    })(),
   });
 
   useEffect(() => {
@@ -257,22 +264,22 @@ export function SiteConfigForm({
               return "";
             }
           })(),
-      scrapeCoverage:
-        typeof (site.scrapeConfig as any)?.max_pages === "number"
-          ? ((site.scrapeConfig as any).max_pages as number) <= 10
-            ? "basic"
-            : ((site.scrapeConfig as any).max_pages as number) <= 50
-              ? "wide"
-              : "thorough"
-          : "thorough",
-      scrapeSpeed:
-        typeof (site.scrapeConfig as any)?.parallel_workers === "number"
-          ? ((site.scrapeConfig as any).parallel_workers as number) <= 3
-            ? "quick"
-            : ((site.scrapeConfig as any).parallel_workers as number) <= 7
-              ? "speedy"
-              : "fastest"
-          : "speedy",
+      scrapeCoverage: (() => {
+        const raw = site.scrapeConfig as Record<string, unknown> | null | undefined;
+        const mp = persistedInt(raw?.max_pages);
+        if (mp === null) return "thorough";
+        if (mp <= 10) return "basic";
+        if (mp <= 50) return "wide";
+        return "thorough";
+      })(),
+      scrapeSpeed: (() => {
+        const raw = site.scrapeConfig as Record<string, unknown> | null | undefined;
+        const w = persistedInt(raw?.parallel_workers);
+        if (w === null) return "speedy";
+        if (w <= 3) return "quick";
+        if (w <= 7) return "speedy";
+        return "fastest";
+      })(),
     });
     initialSnapshotRef.current = snapshot;
     // Emit initial dirty state (false)
@@ -290,14 +297,14 @@ export function SiteConfigForm({
     },
   });
 
-  const maxPagesByCoverage = (coverage: string) => {
+  const maxPagesByCoverage = (coverage: string): number => {
     if (coverage === "basic") return 10;
     if (coverage === "wide") return 50;
     // MAX tier gets the large crawl.
     return plan === "MAX" ? 1000 : 200;
   };
 
-  const workersBySpeed = (speed: string) => {
+  const workersBySpeed = (speed: string): number => {
     if (speed === "quick") return 3;
     if (speed === "fastest") return 10;
     return 7; // speedy
@@ -331,9 +338,9 @@ export function SiteConfigForm({
           .split("\n")
           .map((s) => s.trim())
           .filter(Boolean),
-        max_pages: maxPagesByCoverage(form.scrapeCoverage),
+        max_pages: Math.trunc(maxPagesByCoverage(form.scrapeCoverage)),
         delay: 0.5,
-        parallel_workers: workersBySpeed(form.scrapeSpeed),
+        parallel_workers: Math.trunc(workersBySpeed(form.scrapeSpeed)),
         respect_allowed_prefixes: true,
       },
     });

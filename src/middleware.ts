@@ -5,7 +5,10 @@ export default withAuth(
   function middleware(req) {
     // Forward-compatible validation for scrape config presets.
     // (We will later enforce per-site limits based on these.)
-    if (req.nextUrl.pathname.startsWith("/api/v1/knowledge-base/")) {
+    if (
+      req.nextUrl.pathname.startsWith("/api/v1/knowledge-base/") &&
+      req.nextUrl.pathname !== "/api/v1/knowledge-base/run/callback"
+    ) {
       const plan = ((req as unknown as { nextauth?: { token?: { plan?: string } } }).nextauth
         ?.token?.plan ?? "FREE") as string;
       const coverage = req.headers.get("x-kb-coverage");
@@ -34,7 +37,11 @@ export default withAuth(
       signIn: "/auth/signin",
     },
     callbacks: {
-      authorized: ({ token }) => !!token,
+      authorized: ({ token, req }) => {
+        // Scraper service calls this endpoint without user auth.
+        if (req.nextUrl.pathname === "/api/v1/knowledge-base/run/callback") return true;
+        return !!token;
+      },
     },
   }
 );

@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
 import { env } from "~/env.js";
+import { normalizeScrapeConfigObject } from "~/lib/scrape-config-normalize";
 
 function withAppDomain(domains: string[]) {
   const set = new Set(domains.map((d) => d.trim()).filter(Boolean));
@@ -148,6 +149,12 @@ export const sitesRouter = createTRPCRouter({
       }
 
       const { scrapeConfig, ...rest } = data;
+      const normalizedScrapeConfig =
+        typeof scrapeConfig === "undefined"
+          ? undefined
+          : scrapeConfig === null
+            ? undefined
+            : normalizeScrapeConfigObject(scrapeConfig);
       return ctx.db.site.update({
         where: { id },
         data: {
@@ -159,7 +166,7 @@ export const sitesRouter = createTRPCRouter({
             ? {}
             : scrapeConfig === null
               ? { scrapeConfig: undefined }
-              : { scrapeConfig: scrapeConfig as never }),
+              : { scrapeConfig: normalizedScrapeConfig as never }),
         },
       });
     }),

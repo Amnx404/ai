@@ -12,6 +12,7 @@ import {
   scraperStopRun,
   type PipelineRunRequest,
 } from "~/lib/scraper-pipeline";
+import { normalizeScrapeConfigObject } from "~/lib/scrape-config-normalize";
 
 const bodySchema = z.object({
   siteId: z.string().min(1),
@@ -96,26 +97,21 @@ export async function POST(req: NextRequest) {
     ((site as unknown as { livePineconePrefix?: string | null }).livePineconePrefix ??
       `${site.id}-live-v-`);
 
-  const scrapeConfig = (site.scrapeConfig ?? {}) as Record<string, unknown>;
+  const scrapeConfig = normalizeScrapeConfigObject(site.scrapeConfig ?? {});
   const scrape = {
-    seed_urls: Array.isArray((scrapeConfig as any).seed_urls)
-      ? ((scrapeConfig as any).seed_urls as unknown[]).filter((v): v is string => typeof v === "string")
+    seed_urls: Array.isArray(scrapeConfig.seed_urls)
+      ? (scrapeConfig.seed_urls as unknown[]).filter((v): v is string => typeof v === "string")
       : site.primaryUrl
         ? [site.primaryUrl]
         : [],
-    allowed_prefixes: Array.isArray((scrapeConfig as any).allowed_prefixes)
-      ? ((scrapeConfig as any).allowed_prefixes as unknown[]).filter((v): v is string => typeof v === "string")
+    allowed_prefixes: Array.isArray(scrapeConfig.allowed_prefixes)
+      ? (scrapeConfig.allowed_prefixes as unknown[]).filter((v): v is string => typeof v === "string")
       : [],
-    max_pages: typeof (scrapeConfig as any).max_pages === "number" ? (scrapeConfig as any).max_pages : 200,
-    delay: typeof (scrapeConfig as any).delay === "number" ? (scrapeConfig as any).delay : 0.5,
-    parallel_workers:
-      typeof (scrapeConfig as any).parallel_workers === "number"
-        ? (scrapeConfig as any).parallel_workers
-        : 4,
+    max_pages: typeof scrapeConfig.max_pages === "number" ? scrapeConfig.max_pages : 200,
+    delay: typeof scrapeConfig.delay === "number" ? scrapeConfig.delay : 0.5,
+    parallel_workers: typeof scrapeConfig.parallel_workers === "number" ? scrapeConfig.parallel_workers : 4,
     use_selenium:
-      typeof (scrapeConfig as any).use_selenium === "boolean"
-        ? Boolean((scrapeConfig as any).use_selenium)
-        : true,
+      typeof scrapeConfig.use_selenium === "boolean" ? Boolean(scrapeConfig.use_selenium) : true,
     respect_allowed_prefixes: true,
   };
 
