@@ -23,6 +23,9 @@ export const env = createEnv({
     PINECONE_EMBED_MODEL: z.string().min(1).optional(),
     // Internal scraper pipeline service (FastAPI) base URL.
     SCRAPER_PIPELINE_BASE_URL: z.string().url().optional(),
+    // Public base URL that the scraper pipeline can POST callbacks to.
+    // Example: https://app.yourdomain.com
+    callback_URL: z.string().url().optional(),
     // Optional: default finetune model id used by /prepare when finetune=true.
     SCRAPER_FINETUNE_MODEL: z.string().min(1).optional(),
     // Prompt used by scraper pipeline when finetune=true (markdown cleaner).
@@ -47,6 +50,7 @@ export const env = createEnv({
     PINECONE_INDEX_HOST: process.env.PINECONE_INDEX_HOST,
     PINECONE_EMBED_MODEL: process.env.PINECONE_EMBED_MODEL,
     SCRAPER_PIPELINE_BASE_URL: process.env.SCRAPER_PIPELINE_BASE_URL,
+    callback_URL: process.env.callback_URL,
     SCRAPER_FINETUNE_MODEL: process.env.SCRAPER_FINETUNE_MODEL,
     FINETUNE_PROMPT: process.env.FINETUNE_PROMPT,
     WIDGET_JWT_SECRET: process.env.WIDGET_JWT_SECRET,

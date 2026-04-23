@@ -119,7 +119,8 @@ export async function POST(req: NextRequest) {
     respect_allowed_prefixes: true,
   };
 
-  const callbackUrl = new URL("/api/v1/knowledge-base/run/callback", env.NEXTAUTH_URL);
+  const callbackBase = env.callback_URL ?? env.NEXTAUTH_URL;
+  const callbackUrl = new URL("/api/v1/knowledge-base/run/callback", callbackBase);
   callbackUrl.searchParams.set("siteId", site.id);
   // runId is intentionally NOT required here; callback handler can derive it from body/status.
   callbackUrl.searchParams.set("clientRequestId", clientRequestId);

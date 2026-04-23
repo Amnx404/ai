@@ -38,6 +38,17 @@ export function SiteActiveSwitch({
                 ? "Checking…"
                 : "Activate site"
       }
+      onClick={(e) => {
+        // This component is often rendered inside a clickable card/link.
+        // Prevent accidental navigation when toggling.
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onPointerDown={(e) => {
+        // Some browsers/controls trigger navigation on pointerdown before click.
+        e.preventDefault();
+        e.stopPropagation();
+      }}
     >
       <Switch
         checked={local}

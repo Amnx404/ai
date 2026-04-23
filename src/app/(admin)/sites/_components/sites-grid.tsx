@@ -47,14 +47,7 @@ export function SitesGrid({
               </h3>
               <p className="truncate text-xs text-gray-500">{site.title}</p>
             </div>
-            <div
-              className="flex-shrink-0"
-              onClick={(e) => {
-                // prevent card navigation when toggling
-                e.preventDefault();
-                e.stopPropagation();
-              }}
-            >
+            <div className="flex-shrink-0">
               <SiteActiveSwitch
                 siteId={site.id}
                 isActive={site.isActive}
