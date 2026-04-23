@@ -64,7 +64,18 @@ export async function GET(req: NextRequest) {
 
   const isCachedOnly = Boolean(parsed.data.cached);
   if (cachedRow?.response && (isCachedOnly || cachedRow.finishedAt)) {
-    // Return cached scraper response as-is.
+    // Callback may have stored a minimal body (e.g. live_namespace only) on the same row.
+    // Pollers expect pipeline_status / current_step like scraperRunStatus(); merge from DB message.
+    const body = cachedRow.response;
+    const msg = typeof cachedRow.message === "string" ? cachedRow.message.trim() : "";
+    const terminal = msg === "succeeded" || msg === "failed" || msg === "aborted";
+    if (body && typeof body === "object" && !Array.isArray(body) && terminal) {
+      const o = body as Record<string, unknown>;
+      const hasPs = typeof o.pipeline_status === "string" && o.pipeline_status.length > 0;
+      if (!hasPs) {
+        return jsonNoStore({ ...o, pipeline_status: msg });
+      }
+    }
     return jsonNoStore(cachedRow.response);
   }
 
