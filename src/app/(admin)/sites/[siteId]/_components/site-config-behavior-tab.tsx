@@ -8,6 +8,7 @@ export function SiteConfigBehaviorTab({
   plan,
   models,
   freeModelId,
+  onPersist,
 }: {
   form: {
     allowedDomains: string;
@@ -19,6 +20,7 @@ export function SiteConfigBehaviorTab({
   plan: "FREE" | "PRO" | "MAX";
   models: Array<{ id: string; label: string }>;
   freeModelId: string;
+  onPersist: () => void;
 }) {
   return (
     <>
@@ -30,6 +32,7 @@ export function SiteConfigBehaviorTab({
           <input
             value={form.allowedDomains}
             onChange={(e) => setForm({ ...form, allowedDomains: e.target.value })}
+            onBlur={onPersist}
             placeholder="example.com, app.example.com"
             className={inputCls}
           />
@@ -45,6 +48,7 @@ export function SiteConfigBehaviorTab({
         <input
           value={form.allowedTopics}
           onChange={(e) => setForm({ ...form, allowedTopics: e.target.value })}
+          onBlur={onPersist}
           placeholder="pricing, features, docs"
           className={inputCls}
         />
@@ -53,6 +57,7 @@ export function SiteConfigBehaviorTab({
         <select
           value={form.modelId}
           onChange={(e) => setForm({ ...form, modelId: e.target.value })}
+          onBlur={onPersist}
           className={inputCls}
         >
           {models.map((m) => {
@@ -75,6 +80,8 @@ export function SiteConfigBehaviorTab({
           onChange={(e) =>
             setForm({ ...form, temperature: parseFloat(e.target.value) })
           }
+          onBlur={onPersist}
+          onPointerUp={onPersist}
           className="w-full accent-indigo-600"
         />
       </Field>

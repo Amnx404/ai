@@ -6,7 +6,7 @@ import { authOptions } from "~/server/auth";
 import { db } from "~/server/db";
 import { SiteConfigForm } from "./_components/site-config-form";
 import { EmbedSnippet } from "./_components/embed-snippet";
-import { SiteAnalytics } from "./_components/site-analytics";
+import { SiteMonitorView } from "./_components/site-monitor-view";
 import { SiteActiveToggle } from "./_components/site-active-toggle";
 
 export default async function SiteDetailPage({
@@ -86,23 +86,31 @@ export default async function SiteDetailPage({
             </div>
           </div>
           </div>
-          <div className="flex items-center gap-2">
-            <span
-              className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${
-                site.isActive
-                  ? "border-green-200 bg-green-50 text-green-700"
-                  : "border-gray-200 bg-gray-50 text-gray-700"
-              }`}
-              title={site.isActive ? "This site is live" : "This site is not live"}
-            >
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex items-center gap-2">
               <span
-                className={`h-2.5 w-2.5 rounded-full ${
-                  site.isActive ? "bg-green-500" : "bg-gray-400"
+                className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${
+                  site.isActive
+                    ? "border-green-200 bg-green-50 text-green-700"
+                    : "border-gray-200 bg-gray-50 text-gray-700"
                 }`}
-              />
-              {site.isActive ? "Live" : "Not live"}
-            </span>
-            <SiteActiveToggle siteId={site.id} isActive={site.isActive} />
+                title={site.isActive ? "This site is live" : "This site is not live"}
+              >
+                <span
+                  className={`h-2.5 w-2.5 rounded-full ${
+                    site.isActive ? "bg-green-500" : "bg-gray-400"
+                  }`}
+                />
+                {site.isActive ? "Live" : "Not live"}
+              </span>
+              <SiteActiveToggle siteId={site.id} isActive={site.isActive} />
+            </div>
+            <a
+              href={`/widget-demo?siteId=${site.id}&url=${encodeURIComponent(primaryOrigin || "https://example.com/")}`}
+              className="inline-flex w-full min-w-[10rem] items-center justify-center rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 sm:w-auto"
+            >
+              Preview widget
+            </a>
           </div>
         </div>
       </div>
@@ -146,39 +154,15 @@ export default async function SiteDetailPage({
           </div>
         </>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <SiteAnalytics
-            totalSessions={totalSessions}
-            totalMessages={totalMessages}
-            outOfScope={outOfScope}
-          />
-          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm sm:col-span-2 lg:col-span-2">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-              Knowledge base
-            </p>
-            <p className="mt-1 text-sm text-gray-700">
-              Live namespace:{" "}
-              <span className="font-mono text-gray-900">
-                {site.livePineconeNs ?? "(not uploaded yet)"}
-              </span>
-            </p>
-            <p className="mt-2 text-sm text-gray-600">
-              Refresh the knowledge base from the Setup tab to ground answers in
-              your content.
-            </p>
-          </div>
-        </div>
+        <SiteMonitorView
+          siteId={site.id}
+          livePineconeNs={site.livePineconeNs}
+          totalSessions={totalSessions}
+          totalMessages={totalMessages}
+          outOfScope={outOfScope}
+        />
       )}
 
-      {/* Embed snippet */}
-      <div className="mt-6 flex items-center justify-end">
-        <a
-          href={`/widget-demo?siteId=${site.id}&url=${encodeURIComponent(primaryOrigin || "https://example.com/")}`}
-          className="inline-flex items-center justify-center rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-        >
-          Preview widget
-        </a>
-      </div>
       <div className="mt-6" id="embed">
         <EmbedSnippet siteId={site.id} />
       </div>

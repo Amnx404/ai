@@ -5,6 +5,7 @@ import { Field, inputCls } from "./site-config-form.ui";
 export function SiteConfigBrandingTab({
   form,
   setForm,
+  onPersist,
 }: {
   form: {
     name: string;
@@ -15,6 +16,7 @@ export function SiteConfigBrandingTab({
     greeting: string;
   };
   setForm: (next: typeof form) => void;
+  onPersist: () => void;
 }) {
   return (
     <>
@@ -22,6 +24,7 @@ export function SiteConfigBrandingTab({
         <input
           value={form.name}
           onChange={(e) => setForm({ ...form, name: e.target.value })}
+          onBlur={onPersist}
           className={inputCls}
         />
       </Field>
@@ -29,6 +32,7 @@ export function SiteConfigBrandingTab({
         <input
           value={form.primaryUrl}
           onChange={(e) => setForm({ ...form, primaryUrl: e.target.value })}
+          onBlur={onPersist}
           placeholder="https://client.com"
           className={inputCls}
         />
@@ -40,11 +44,13 @@ export function SiteConfigBrandingTab({
               type="color"
               value={form.primaryColor}
               onChange={(e) => setForm({ ...form, primaryColor: e.target.value })}
+              onBlur={onPersist}
               className="h-9 w-12 rounded-lg border border-gray-300 p-0.5 cursor-pointer"
             />
             <input
               value={form.primaryColor}
               onChange={(e) => setForm({ ...form, primaryColor: e.target.value })}
+              onBlur={onPersist}
               className={`${inputCls} flex-1`}
               placeholder="#6366f1"
             />
@@ -54,6 +60,7 @@ export function SiteConfigBrandingTab({
           <input
             value={form.title}
             onChange={(e) => setForm({ ...form, title: e.target.value })}
+            onBlur={onPersist}
             className={inputCls}
           />
         </Field>
@@ -83,6 +90,7 @@ export function SiteConfigBrandingTab({
                 const result = reader.result;
                 if (typeof result === "string") {
                   setForm({ ...form, logoUrl: result });
+                  window.setTimeout(() => onPersist(), 0);
                 }
               };
               reader.readAsDataURL(file);
@@ -92,7 +100,10 @@ export function SiteConfigBrandingTab({
           {form.logoUrl && (
             <button
               type="button"
-              onClick={() => setForm({ ...form, logoUrl: "" })}
+              onClick={() => {
+                setForm({ ...form, logoUrl: "" });
+                window.setTimeout(() => onPersist(), 0);
+              }}
               className="text-sm font-medium text-gray-700 underline"
             >
               Remove
@@ -104,6 +115,7 @@ export function SiteConfigBrandingTab({
         <textarea
           value={form.greeting}
           onChange={(e) => setForm({ ...form, greeting: e.target.value })}
+          onBlur={onPersist}
           rows={3}
           className={`${inputCls} resize-none`}
         />

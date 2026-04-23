@@ -86,11 +86,14 @@ export function UrlListInput({
   onChange,
   placeholder,
   normalize,
+  onPersist,
 }: {
   value: string;
   onChange: (next: string) => void;
   placeholder?: string;
   normalize: (raw: string) => string;
+  /** Called after the list changes or when the draft field loses focus (e.g. site-wide blur save). */
+  onPersist?: () => void;
 }) {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string>("");
@@ -143,11 +146,13 @@ export function UrlListInput({
     const nextItems = Array.from(new Set([...items, ...normalized]));
     onChange(nextItems.join("\n"));
     setDraft("");
+    onPersist?.();
   };
 
   const remove = (idx: number) => {
     const nextItems = items.filter((_, i) => i !== idx);
     onChange(nextItems.join("\n"));
+    onPersist?.();
   };
 
   return (
@@ -166,10 +171,11 @@ export function UrlListInput({
             }
           }}
           onBlur={() => {
-            if (!draft.trim()) return;
-            // Helpful: normalize on blur but don't auto-add unless it's valid.
-            const n = normalize(draft);
-            if (n !== draft) setDraft(n);
+            if (draft.trim()) {
+              const n = normalize(draft);
+              if (n !== draft) setDraft(n);
+            }
+            onPersist?.();
           }}
           className={`${inputCls} font-mono text-xs`}
           placeholder={placeholder}

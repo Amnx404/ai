@@ -107,7 +107,7 @@ export async function POST(req: NextRequest) {
     allowed_prefixes: Array.isArray(scrapeConfig.allowed_prefixes)
       ? (scrapeConfig.allowed_prefixes as unknown[]).filter((v): v is string => typeof v === "string")
       : [],
-    max_pages: typeof scrapeConfig.max_pages === "number" ? scrapeConfig.max_pages : 200,
+    max_pages: typeof scrapeConfig.max_pages === "number" ? scrapeConfig.max_pages : 10,
     delay: typeof scrapeConfig.delay === "number" ? scrapeConfig.delay : 0.5,
     parallel_workers: typeof scrapeConfig.parallel_workers === "number" ? scrapeConfig.parallel_workers : 4,
     use_selenium:

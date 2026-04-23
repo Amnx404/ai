@@ -1,8 +1,55 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ChevronDown } from "lucide-react";
+
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "~/components/ui/collapsible";
+import { cn } from "~/lib/utils";
 
 import { Field, ProgressStep, UrlListInput, inputCls } from "./site-config-form.ui";
+
+function ConfigHintLabel({
+  children,
+  hint,
+  align = "left",
+}: {
+  children: ReactNode;
+  hint: string;
+  align?: "left" | "right";
+}) {
+  return (
+    <div className="group/hint relative mb-1 flex items-center gap-1.5">
+      <span className="text-xs font-medium text-gray-600">{children}</span>
+      <button
+        type="button"
+        className={cn(
+          "inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border border-gray-300 bg-white text-[10px] font-bold leading-none text-gray-500",
+          "shadow-sm hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700",
+          "focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-1",
+        )}
+        aria-label={hint}
+      >
+        ?
+      </button>
+      <span
+        role="tooltip"
+        className={cn(
+          "pointer-events-none invisible absolute top-full z-30 mt-1.5 w-[min(calc(100vw-1.5rem),17rem)] rounded-lg border border-gray-700 bg-gray-900 px-2.5 py-2 text-left text-[11px] font-normal leading-snug text-white shadow-lg",
+          "opacity-0 transition-opacity duration-150",
+          "group-hover/hint:visible group-hover/hint:opacity-100",
+          "group-focus-within/hint:visible group-focus-within/hint:opacity-100",
+          align === "right" ? "right-0" : "left-0",
+        )}
+      >
+        {hint}
+      </span>
+    </div>
+  );
+}
 
 export function SiteConfigKnowledgeTab({
   siteId,
@@ -12,6 +59,7 @@ export function SiteConfigKnowledgeTab({
   setForm,
   normalizeHttps,
   onRefresh,
+  onPersist,
 }: {
   siteId: string;
   siteLivePineconeNs: string | null;
@@ -25,6 +73,7 @@ export function SiteConfigKnowledgeTab({
   setForm: (next: typeof form) => void;
   normalizeHttps: (raw: string) => string;
   onRefresh: () => void;
+  onPersist: () => void;
 }) {
   const [kbRunId, setKbRunId] = useState<string>("");
   const [kbStep, setKbStep] = useState<
@@ -38,6 +87,7 @@ export function SiteConfigKnowledgeTab({
   const [kbErrorPhase, setKbErrorPhase] = useState<
     "scrape" | "prepare" | "upload" | null
   >(null);
+  const [scrapedUrlsOpen, setScrapedUrlsOpen] = useState(false);
 
   const kbBootstrapSeq = useRef(0);
   const kbStartInFlightRef = useRef(false);
@@ -64,18 +114,6 @@ export function SiteConfigKnowledgeTab({
       (kbPipelineStatus !== "succeeded" &&
         kbPipelineStatus !== "failed" &&
         kbPipelineStatus !== "aborted"));
-
-  const maxPagesByCoverage = (coverage: string) => {
-    if (coverage === "basic") return 10;
-    if (coverage === "wide") return 50;
-    return plan === "MAX" ? 1000 : 200;
-  };
-
-  const workersBySpeed = (speed: string) => {
-    if (speed === "quick") return 3;
-    if (speed === "fastest") return 10;
-    return 7; // speedy
-  };
 
   // Bootstrap: on mount, load latest run from DB.
   useEffect(() => {
@@ -266,6 +304,20 @@ export function SiteConfigKnowledgeTab({
     [siteLivePineconeNs],
   );
 
+  const showScrapedUrlsPanel = useMemo(() => {
+    if (kbUrls.length === 0) return false;
+    const scrapePhaseDone =
+      kbStep === "prepare" ||
+      kbStep === "upload" ||
+      kbStep === "done" ||
+      (kbStep === "error" && kbErrorPhase !== "scrape");
+    return scrapePhaseDone;
+  }, [kbUrls.length, kbStep, kbErrorPhase]);
+
+  useEffect(() => {
+    if (!showScrapedUrlsPanel) setScrapedUrlsOpen(false);
+  }, [showScrapedUrlsPanel]);
+
   return (
     <>
       <div className="rounded-3xl border border-gray-200 bg-white px-5 py-5 shadow-sm">
@@ -334,8 +386,8 @@ export function SiteConfigKnowledgeTab({
                     </div>
                     {/* "Indexed" badge intentionally removed — completion is represented by live namespace on the site. */}
                   </div>
-                  <p className="mt-1 text-sm text-gray-600">
-                    We’ll crawl your site and keep answers grounded in your pages.
+                  <p className="mt-1 mb-5 text-sm text-gray-600">
+                    We’ll go around your site and understand whats in and around those pages.
                   </p>
                 </div>
 
@@ -374,33 +426,38 @@ export function SiteConfigKnowledgeTab({
                   </div>
 
                   <p className="text-xs text-gray-500">
-                    {kbRunId ? "Showing the latest run for this site." : "No runs yet."}
+                    {kbRunId ? "" : "No runs yet."}
                   </p>
                 </div>
               </div>
 
-              <Field label="Scrape config" hint="Set what to crawl and how fast.">
+              <Field label="Config">
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-gray-600">
+                    <ConfigHintLabel hint="Starting places for the crawl: full https links to the first pages we open (like your homepage or a docs landing page). We discover more pages by following links from here.">
                       Seed URLs
-                    </label>
+                    </ConfigHintLabel>
                     <UrlListInput
                       value={form.scrapeSeedUrls}
                       placeholder="https://example.com/docs"
                       normalize={normalizeHttps}
                       onChange={(next) => setForm({ ...form, scrapeSeedUrls: next })}
+                      onPersist={onPersist}
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-gray-600">
+                    <ConfigHintLabel
+                      align="right"
+                      hint="We only keep pages whose web address starts with one of these paths—usually your site’s root (https://yoursite.com/) or a folder (https://yoursite.com/docs/). That keeps the crawl on your content and off random external links."
+                    >
                       Allowed prefixes
-                    </label>
+                    </ConfigHintLabel>
                     <UrlListInput
                       value={form.scrapeAllowedPrefixes}
                       placeholder="https://example.com/docs/"
                       normalize={normalizeHttps}
                       onChange={(next) => setForm({ ...form, scrapeAllowedPrefixes: next })}
+                      onPersist={onPersist}
                     />
                   </div>
                 </div>
@@ -410,6 +467,7 @@ export function SiteConfigKnowledgeTab({
                     <select
                       value={form.scrapeCoverage}
                       onChange={(e) => setForm({ ...form, scrapeCoverage: e.target.value })}
+                      onBlur={onPersist}
                       className={inputCls}
                     >
                       <option value="basic">Basic (10 pages)</option>
@@ -425,6 +483,7 @@ export function SiteConfigKnowledgeTab({
                     <select
                       value={form.scrapeSpeed}
                       onChange={(e) => setForm({ ...form, scrapeSpeed: e.target.value })}
+                      onBlur={onPersist}
                       className={inputCls}
                     >
                       <option value="quick">Quick (3 workers)</option>
@@ -484,73 +543,87 @@ export function SiteConfigKnowledgeTab({
                 </div>
               ) : null}
 
-              {kbUrls.length > 0 ? (
-                <details
-                  className="mt-4 rounded-2xl border border-green-200 bg-green-50 px-4 py-3"
-                  open={isKbPolling}
+              {showScrapedUrlsPanel ? (
+                <Collapsible
+                  open={scrapedUrlsOpen}
+                  onOpenChange={setScrapedUrlsOpen}
+                  className="mt-4 rounded-2xl border border-emerald-200/80 bg-gradient-to-b from-emerald-50/90 to-white shadow-sm ring-1 ring-emerald-900/5"
                 >
-                  <summary className="cursor-pointer select-none">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <span className="relative inline-flex h-2.5 w-2.5">
-                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
-                        </span>
-                        <p className="text-sm font-semibold text-green-900">
-                          {isKbPolling ? "Scraping…" : "Scraped URLs"}
+                  <CollapsibleTrigger
+                    className={cn(
+                      "flex w-full items-center justify-between gap-3 rounded-2xl px-4 py-3.5 text-left",
+                      "outline-none transition-colors hover:bg-emerald-50/60",
+                      "focus-visible:ring-2 focus-visible:ring-emerald-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white",
+                      scrapedUrlsOpen &&
+                        "rounded-b-none border-b border-emerald-200/60 bg-emerald-50/40",
+                    )}
+                  >
+                    <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                      <span className="inline-flex h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-500 shadow-sm ring-2 ring-emerald-200/80" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-emerald-950">Scraped URLs</p>
+                        <p className="truncate text-[11px] font-medium text-emerald-800/90 sm:hidden">
+                          {kbUrls[kbUrls.length - 1]}
                         </p>
                       </div>
-                      <div className="flex items-center gap-2">
-                        {!isKbPolling ? (
-                          <span className="hidden max-w-[22rem] truncate text-[11px] font-medium text-green-800 sm:inline">
-                            Latest: {kbUrls[kbUrls.length - 1]}
-                          </span>
-                        ) : null}
-                        <span className="text-xs font-medium text-green-800">
-                          {kbUrls.length} URLs
-                        </span>
-                      </div>
                     </div>
-                  </summary>
-                  <div className="mt-3 max-h-64 overflow-auto rounded-xl border border-green-200 bg-white/80 p-2">
-                    <ul className="space-y-1 text-xs text-gray-800">
-                      {kbUrls
-                        .slice()
-                        .reverse()
-                        .map((u) => (
-                          <li
-                            key={u}
-                            className="group flex items-start justify-between gap-2 rounded-lg px-2 py-1 hover:bg-green-50"
-                          >
-                            <a
-                              href={u}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="min-w-0 break-all text-green-900 underline decoration-green-200 underline-offset-2 hover:decoration-green-400"
+                    <div className="flex shrink-0 items-center gap-2 pl-2">
+                      <span className="hidden max-w-[14rem] truncate text-[11px] font-medium text-emerald-800/90 sm:inline">
+                        {kbUrls[kbUrls.length - 1]}
+                      </span>
+                      <span className="rounded-lg bg-emerald-600/10 px-2 py-0.5 text-xs font-semibold tabular-nums text-emerald-900">
+                        {kbUrls.length}
+                      </span>
+                      <ChevronDown
+                        className={cn(
+                          "h-4 w-4 shrink-0 text-emerald-800/70 transition-transform duration-200",
+                          scrapedUrlsOpen && "rotate-180",
+                        )}
+                        aria-hidden
+                      />
+                    </div>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="border-t border-emerald-200/50 px-2 pb-2 pt-0 data-[state=closed]:hidden">
+                    <div className="max-h-64 overflow-auto rounded-xl border border-emerald-100 bg-white/95 p-2 shadow-inner">
+                      <ul className="space-y-0.5 text-xs text-gray-800">
+                        {kbUrls
+                          .slice()
+                          .reverse()
+                          .map((u) => (
+                            <li
+                              key={u}
+                              className="group flex items-start justify-between gap-2 rounded-lg px-2 py-1.5 hover:bg-emerald-50/80"
                             >
-                              {u}
-                            </a>
-                            <button
-                              type="button"
-                              onClick={async (e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                try {
-                                  await navigator.clipboard.writeText(u);
-                                } catch {
-                                  // ignore
-                                }
-                              }}
-                              className="shrink-0 rounded-md border border-green-200 bg-white px-2 py-0.5 text-[11px] font-medium text-green-900 opacity-0 shadow-sm transition-opacity hover:bg-green-50 group-hover:opacity-100"
-                              title="Copy URL"
-                            >
-                              Copy
-                            </button>
-                          </li>
-                        ))}
-                    </ul>
-                  </div>
-                </details>
+                              <a
+                                href={u}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="min-w-0 break-all text-emerald-950 underline decoration-emerald-200 underline-offset-2 hover:decoration-emerald-400"
+                              >
+                                {u}
+                              </a>
+                              <button
+                                type="button"
+                                onClick={async (e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  try {
+                                    await navigator.clipboard.writeText(u);
+                                  } catch {
+                                    // ignore
+                                  }
+                                }}
+                                className="shrink-0 rounded-md border border-emerald-200/80 bg-white px-2 py-0.5 text-[11px] font-medium text-emerald-900 opacity-0 shadow-sm transition-opacity hover:bg-emerald-50 group-hover:opacity-100"
+                                title="Copy URL"
+                              >
+                                Copy
+                              </button>
+                            </li>
+                          ))}
+                      </ul>
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
               ) : null}
             </>
           );

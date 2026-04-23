@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { type Site } from "@prisma/client";
 import { useSession } from "next-auth/react";
 
 import { api } from "~/trpc/react";
+import { buildScrapeConfigFromKnowledgeFields } from "~/lib/site-scrape-form";
 import { SiteConfigBrandingTab } from "./site-config-branding-tab";
 import { SiteConfigBehaviorTab } from "./site-config-behavior-tab";
 import { SiteConfigKnowledgeTab } from "./site-config-knowledge-tab";
@@ -123,7 +124,7 @@ export function SiteConfigForm({
         })(),
     scrapeCoverage: (() => {
       const mp = persistedInt(initialScrapeConfig.max_pages);
-      if (mp === null) return "thorough";
+      if (mp === null) return "basic";
       if (mp <= 10) return "basic";
       if (mp <= 50) return "wide";
       return "thorough";
@@ -137,10 +138,56 @@ export function SiteConfigForm({
     })(),
   });
 
+  const formRef = useRef(form);
+  formRef.current = form;
+
+  const initialSnapshotRef = useRef<string>("");
+  const lastDirtyRef = useRef<boolean>(false);
+
+  const updateSite = api.sites.update.useMutation({
+    onSuccess: () => {
+      window.dispatchEvent(new CustomEvent("site:dirty", { detail: { dirty: false } }));
+      lastDirtyRef.current = false;
+      router.refresh();
+    },
+  });
+
+  const persistSite = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      const f = formRef.current;
+      updateSite.mutate({
+        id: site.id,
+        name: f.name,
+        primaryColor: f.primaryColor,
+        title: f.title,
+        greeting: f.greeting,
+        primaryUrl: f.primaryUrl.trim() ? normalizeHttps(f.primaryUrl.trim()) : "",
+        logoUrl: f.logoUrl.trim() ? f.logoUrl.trim() : null,
+        allowedDomains: f.allowedDomains
+          .split(",")
+          .map((d) => d.trim())
+          .filter(Boolean),
+        allowedTopics: f.allowedTopics
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean),
+        modelId: f.modelId,
+        temperature: f.temperature,
+        scrapeConfig: buildScrapeConfigFromKnowledgeFields({
+          scrapeSeedUrls: f.scrapeSeedUrls,
+          scrapeAllowedPrefixes: f.scrapeAllowedPrefixes,
+          scrapeCoverage: f.scrapeCoverage,
+          scrapeSpeed: f.scrapeSpeed,
+          plan,
+        }) as never,
+      });
+    });
+  }, [site.id, plan, normalizeHttps, updateSite]);
+
   useEffect(() => {
-    // Free tier: lock model selection to the allowed model.
     if (plan === "FREE" && form.modelId !== FREE_MODEL_ID) {
       setForm((prev) => ({ ...prev, modelId: FREE_MODEL_ID }));
+      window.requestAnimationFrame(() => persistSite());
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plan]);
@@ -224,12 +271,9 @@ export function SiteConfigForm({
 
     if (nextCoverage !== form.scrapeCoverage || nextSpeed !== form.scrapeSpeed) {
       setForm((prev) => ({ ...prev, scrapeCoverage: nextCoverage, scrapeSpeed: nextSpeed }));
+      window.requestAnimationFrame(() => persistSite());
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plan, site.id]);
-
-  const initialSnapshotRef = useRef<string>("");
-  const lastDirtyRef = useRef<boolean>(false);
+  }, [plan, site.id, form.scrapeCoverage, form.scrapeSpeed, persistSite]);
 
   useEffect(() => {
     // Build a stable snapshot of the persisted site state to compare against.
@@ -267,7 +311,7 @@ export function SiteConfigForm({
       scrapeCoverage: (() => {
         const raw = site.scrapeConfig as Record<string, unknown> | null | undefined;
         const mp = persistedInt(raw?.max_pages);
-        if (mp === null) return "thorough";
+        if (mp === null) return "basic";
         if (mp <= 10) return "basic";
         if (mp <= 50) return "wide";
         return "thorough";
@@ -288,64 +332,6 @@ export function SiteConfigForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [site.id]);
 
-  const updateSite = api.sites.update.useMutation({
-    onSuccess: () => {
-      // On refresh, the server state becomes canonical, so we can clear dirty immediately.
-      window.dispatchEvent(new CustomEvent("site:dirty", { detail: { dirty: false } }));
-      lastDirtyRef.current = false;
-      router.refresh();
-    },
-  });
-
-  const maxPagesByCoverage = (coverage: string): number => {
-    if (coverage === "basic") return 10;
-    if (coverage === "wide") return 50;
-    // MAX tier gets the large crawl.
-    return plan === "MAX" ? 1000 : 200;
-  };
-
-  const workersBySpeed = (speed: string): number => {
-    if (speed === "quick") return 3;
-    if (speed === "fastest") return 10;
-    return 7; // speedy
-  };
-
-  function save() {
-    updateSite.mutate({
-      id: site.id,
-      name: form.name,
-      primaryColor: form.primaryColor,
-      title: form.title,
-      greeting: form.greeting,
-      primaryUrl: form.primaryUrl.trim() ? normalizeHttps(form.primaryUrl.trim()) : "",
-      logoUrl: form.logoUrl.trim() ? form.logoUrl.trim() : null,
-      allowedDomains: form.allowedDomains
-        .split(",")
-        .map((d) => d.trim())
-        .filter(Boolean),
-      allowedTopics: form.allowedTopics
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean),
-      modelId: form.modelId,
-      temperature: form.temperature,
-      scrapeConfig: {
-        seed_urls: form.scrapeSeedUrls
-          .split("\n")
-          .map((s) => s.trim())
-          .filter(Boolean),
-        allowed_prefixes: form.scrapeAllowedPrefixes
-          .split("\n")
-          .map((s) => s.trim())
-          .filter(Boolean),
-        max_pages: Math.trunc(maxPagesByCoverage(form.scrapeCoverage)),
-        delay: 0.5,
-        parallel_workers: Math.trunc(workersBySpeed(form.scrapeSpeed)),
-        respect_allowed_prefixes: true,
-      },
-    });
-  }
-
   // Dirty-state emitter for the setup widget.
   useEffect(() => {
     const dirty = JSON.stringify(form) !== initialSnapshotRef.current;
@@ -355,15 +341,11 @@ export function SiteConfigForm({
     }
   }, [form]);
 
-  // Allow the setup widget to trigger a save.
   useEffect(() => {
-    const onRequestSave = () => {
-      save();
-    };
+    const onRequestSave = () => persistSite();
     window.addEventListener("site:request-save", onRequestSave);
     return () => window.removeEventListener("site:request-save", onRequestSave);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form]);
+  }, [persistSite]);
 
   const tabDone = useMemo(() => {
     const branding = form.name.trim().length > 0 && form.primaryUrl.trim().length > 0;
@@ -481,6 +463,7 @@ export function SiteConfigForm({
                 ...next,
               }))
             }
+            onPersist={persistSite}
           />
         ) : null}
 
@@ -501,6 +484,7 @@ export function SiteConfigForm({
             plan={plan}
             models={MODELS}
             freeModelId={FREE_MODEL_ID}
+            onPersist={persistSite}
           />
         ) : null}
 
@@ -523,26 +507,16 @@ export function SiteConfigForm({
             }
             normalizeHttps={normalizeHttps}
             onRefresh={() => router.refresh()}
+            onPersist={persistSite}
           />
         ) : null}
       </div>
 
-      <div className="flex items-center justify-between border-t border-gray-200 px-6 py-4">
-        {updateSite.isSuccess && (
-          <p className="text-sm text-green-600 font-medium">Saved!</p>
-        )}
-        {updateSite.error && (
-          <p className="text-sm text-red-600">{updateSite.error.message}</p>
-        )}
-        {!updateSite.isSuccess && !updateSite.error && <span />}
-        <button
-          onClick={save}
-          disabled={updateSite.isPending}
-          className="rounded-xl bg-indigo-600 px-5 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60 transition-colors"
-        >
-          {updateSite.isPending ? "Saving…" : "Save changes"}
-        </button>
-      </div>
+      {updateSite.error ? (
+        <div className="border-t border-red-100 bg-red-50/80 px-6 py-3 text-sm text-red-800">
+          {updateSite.error.message}
+        </div>
+      ) : null}
     </div>
   );
 }

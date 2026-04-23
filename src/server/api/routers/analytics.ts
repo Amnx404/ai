@@ -49,6 +49,82 @@ export const analyticsRouter = createTRPCRouter({
       });
     }),
 
+  /** Lightweight rows for the site monitor sidebar (newest first). */
+  monitorSessions: protectedProcedure
+    .input(
+      z.object({
+        siteId: z.string(),
+        limit: z.number().min(1).max(100).default(50),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const user = await ctx.db.user.findUnique({
+        where: { id: ctx.session.user.id },
+        select: { orgId: true },
+      });
+      const site = await ctx.db.site.findFirst({
+        where: { id: input.siteId, orgId: user?.orgId ?? "" },
+      });
+      if (!site) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const rows = await ctx.db.chatSession.findMany({
+        where: { siteId: input.siteId },
+        orderBy: { createdAt: "desc" },
+        take: input.limit,
+        select: {
+          id: true,
+          createdAt: true,
+          _count: { select: { messages: true } },
+          messages: {
+            where: { role: "user" },
+            orderBy: { createdAt: "asc" },
+            take: 1,
+            select: { content: true },
+          },
+        },
+      });
+
+      return rows.map((r) => ({
+        id: r.id,
+        createdAt: r.createdAt,
+        messageCount: r._count.messages,
+        firstUserQuestion: r.messages[0]?.content ?? null,
+      }));
+    }),
+
+  /** Full transcript for one session (same org/site guard). */
+  sessionThread: protectedProcedure
+    .input(z.object({ siteId: z.string(), sessionId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const user = await ctx.db.user.findUnique({
+        where: { id: ctx.session.user.id },
+        select: { orgId: true },
+      });
+      const site = await ctx.db.site.findFirst({
+        where: { id: input.siteId, orgId: user?.orgId ?? "" },
+      });
+      if (!site) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const chatSession = await ctx.db.chatSession.findFirst({
+        where: { id: input.sessionId, siteId: input.siteId },
+        include: {
+          messages: { orderBy: { createdAt: "asc" } },
+        },
+      });
+      if (!chatSession) throw new TRPCError({ code: "NOT_FOUND" });
+
+      return {
+        id: chatSession.id,
+        createdAt: chatSession.createdAt,
+        messages: chatSession.messages.map((m) => ({
+          id: m.id,
+          role: m.role as "user" | "assistant",
+          content: m.content,
+          createdAt: m.createdAt,
+        })),
+      };
+    }),
+
   dailyChats: protectedProcedure
     .input(
       z.object({
