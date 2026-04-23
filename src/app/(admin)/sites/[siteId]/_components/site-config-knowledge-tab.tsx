@@ -304,6 +304,14 @@ export function SiteConfigKnowledgeTab({
     [siteLivePineconeNs],
   );
 
+  /** Local run state can show success before RSC refreshes `site.livePineconeNs` from the callback. */
+  const runLooksComplete = useMemo(
+    () =>
+      kbStep === "done" ||
+      kbPipelineStatus.trim().toLowerCase() === "succeeded",
+    [kbStep, kbPipelineStatus],
+  );
+
   const showScrapedUrlsPanel = useMemo(() => {
     if (kbUrls.length === 0) return false;
     const scrapePhaseDone =
@@ -328,12 +336,12 @@ export function SiteConfigKnowledgeTab({
               ? { tone: "muted", label: "Starting…" }
               : isKbPolling
                 ? { tone: "live", label: "Scraping in progress" }
-                : !hasLiveNamespace
-                  ? { tone: "error", label: "Needs scraping / indexing" }
-                  : kbStep === "done"
+                : kbStep === "error"
+                  ? { tone: "error", label: "Needs attention" }
+                  : runLooksComplete
                     ? { tone: "ok", label: "Up to date" }
-                    : kbStep === "error"
-                      ? { tone: "error", label: "Needs attention" }
+                    : !hasLiveNamespace
+                      ? { tone: "error", label: "Needs scraping / indexing" }
                       : kbRunId
                         ? { tone: "muted", label: "Last run loaded" }
                         : { tone: "muted", label: "Not scraped yet" };
@@ -387,7 +395,11 @@ export function SiteConfigKnowledgeTab({
                     {/* "Indexed" badge intentionally removed — completion is represented by live namespace on the site. */}
                   </div>
                   <p className="mt-1 mb-5 text-sm text-gray-600">
-                    We’ll go around your site and understand whats in and around those pages.
+                    {runLooksComplete
+                      ? "Your latest crawl finished and is ready to use. Run again whenever your site changes."
+                      : isKbPolling
+                        ? "Hang tight—we’re crawling your pages and building the knowledge index."
+                        : "We’ll go around your site and understand what’s on those pages and what links to them."}
                   </p>
                 </div>
 

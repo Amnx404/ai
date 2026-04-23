@@ -126,7 +126,7 @@ export function GettingStarted({
           )}
           <Link
             href={`/widget-demo?siteId=${siteId}&url=${encodeURIComponent(primaryOrigin || "https://example.com/")}`}
-            className="inline-flex items-center justify-center rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+            className="inline-flex items-center justify-center rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-md shadow-indigo-600/25 ring-1 ring-indigo-500/30 transition-colors hover:bg-indigo-700 hover:shadow-lg hover:shadow-indigo-600/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
           >
             Preview widget
           </Link>
