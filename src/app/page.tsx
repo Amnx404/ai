@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Script from "next/script";
 import { IBM_Plex_Mono } from "next/font/google";
 import { GeistSans } from "geist/font/sans";
 import { RotatingWords } from "./_components/rotating-words";
@@ -287,6 +288,15 @@ export default function HomePage() {
         @keyframes ae-fade { from { opacity: 0 } to { opacity: 1 } }
         @keyframes ae-slide { from { opacity: 0; transform: translateY(18px) } to { opacity: 1; transform: translateY(0) } }
       `}</style>
+
+      <Script
+        id="chat-widget-config"
+        strategy="beforeInteractive"
+        dangerouslySetInnerHTML={{
+          __html: 'window.ChatWidget = { siteId: "cmobwwqxn00l7ry1ysx2iyo9u" };',
+        }}
+      />
+      <Script src="https://altegolabs.com/widget.js" strategy="afterInteractive" />
     </main>
   );
 }
