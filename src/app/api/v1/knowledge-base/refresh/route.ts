@@ -235,21 +235,24 @@ export async function POST(req: NextRequest) {
   }).catch(() => null);
 
   // 4) Wait until finished and then update site's live namespace pointer
-  let finalStatus: ApiStatus | null = null;
+  let finalStatus: Awaited<ReturnType<typeof waitForRunFinished>> | null = null;
   try {
     finalStatus = await waitForRunFinished(scraped.run_id, { timeoutMs: 15 * 60 * 1000 });
   } catch {
     // ok: return whatever we have; run can keep processing
   }
 
+  const finalUploadOutputs =
+    finalStatus?.step_responses?.upload?.outputs &&
+    typeof finalStatus.step_responses.upload.outputs === "object"
+      ? (finalStatus.step_responses.upload.outputs as Record<string, unknown>)
+      : undefined;
+
   const outputs =
-    (finalStatus?.outputs && typeof finalStatus.outputs === "object"
-      ? (finalStatus.outputs as Record<string, unknown>)
-      : null) ??
+    finalUploadOutputs ??
     (uploaded.outputs && typeof uploaded.outputs === "object"
       ? (uploaded.outputs as Record<string, unknown>)
-      : null) ??
-    undefined;
+      : undefined);
 
   const liveNs =
     (typeof uploaded.live_namespace === "string" && uploaded.live_namespace.trim()

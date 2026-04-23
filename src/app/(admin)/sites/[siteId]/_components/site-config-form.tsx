@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { type Site } from "@prisma/client";
+import { useSession } from "next-auth/react";
 
 import { resolvePineconeTarget } from "~/lib/pinecone-resolve";
 import { api } from "~/trpc/react";
@@ -14,6 +15,8 @@ const MODELS = [
   { id: "openai/gpt-5.4", label: "GPT-5.4" },
 
 ];
+
+const FREE_MODEL_ID = "google/gemini-2.5-flash";
 
 export function SiteConfigForm({
   site,
@@ -27,6 +30,8 @@ export function SiteConfigForm({
   initialTab?: "branding" | "behavior" | "knowledge";
 }) {
   const router = useRouter();
+  const { data: session } = useSession();
+  const plan = ((session?.user as any)?.plan ?? "FREE") as "FREE" | "PRO" | "MAX";
   const normalizeHttps = (raw: string) => {
     const s = raw.trim();
     if (!s) return "";
@@ -44,6 +49,13 @@ export function SiteConfigForm({
     if (/^http:\/\//i.test(candidate)) return candidate.replace(/^http:\/\//i, "https://");
     return `https://${candidate}`;
   };
+
+  const stripImplicitDomains = (domains: string[]) =>
+    domains.filter((d) => {
+      const s = String(d ?? "").trim();
+      if (!s) return false;
+      return !/^(localhost(:\d+)?|127\.0\.0\.1(:\d+)?)$/i.test(s);
+    });
 
   const baseOrigin = (raw: string) => {
     try {
@@ -71,12 +83,10 @@ export function SiteConfigForm({
     greeting: site.greeting,
     primaryUrl: site.primaryUrl ?? "",
     logoUrl: site.logoUrl ?? "",
-    allowedDomains: site.allowedDomains.join(", "),
+    allowedDomains: stripImplicitDomains(site.allowedDomains).join(", "),
     allowedTopics: site.allowedTopics.join(", "),
     modelId: site.modelId,
     temperature: site.temperature,
-    pineconeIndex: site.pineconeIndex ?? "",
-    pineconeNs: site.pineconeNs ?? "",
     liveVersion: site.liveVersion,
     livePineconePrefix:
       (
@@ -101,23 +111,114 @@ export function SiteConfigForm({
             return "";
           }
         })(),
-    scrapeMaxPages:
+    scrapeCoverage:
       typeof initialScrapeConfig.max_pages === "number"
-        ? String(initialScrapeConfig.max_pages)
-        : "200",
-    scrapeDelay:
-      typeof initialScrapeConfig.delay === "number"
-        ? String(initialScrapeConfig.delay)
-        : "0.5",
-    scrapeParallelWorkers:
+        ? Number(initialScrapeConfig.max_pages) <= 10
+          ? "basic"
+          : Number(initialScrapeConfig.max_pages) <= 50
+            ? "wide"
+            : "thorough"
+        : "thorough",
+    scrapeSpeed:
       typeof initialScrapeConfig.parallel_workers === "number"
-        ? String(initialScrapeConfig.parallel_workers)
-        : "4",
-    scrapeUseSelenium:
-      typeof initialScrapeConfig.use_selenium === "boolean"
-        ? initialScrapeConfig.use_selenium
-        : true,
+        ? Number(initialScrapeConfig.parallel_workers) <= 3
+          ? "quick"
+          : Number(initialScrapeConfig.parallel_workers) <= 7
+            ? "speedy"
+            : "fastest"
+        : "speedy",
   });
+
+  useEffect(() => {
+    // Free tier: lock model selection to the allowed model.
+    if (plan === "FREE" && form.modelId !== FREE_MODEL_ID) {
+      setForm((prev) => ({ ...prev, modelId: FREE_MODEL_ID }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan]);
+
+  const computeSuggestedAllowedDomains = (rawCurrent: string) => {
+    const set = new Set(
+      rawCurrent
+        .split(",")
+        .map((d) => d.trim())
+        .filter(Boolean),
+    );
+
+    try {
+      const primaryHost = new URL(normalizeHttps(form.primaryUrl).trim()).host;
+      if (primaryHost) set.add(primaryHost);
+    } catch {
+      // ignore
+    }
+
+    return [...set].join(", ");
+  };
+
+  useEffect(() => {
+    // Only prefill defaults if the site hasn't set any explicit domains yet.
+    if (site.allowedDomains.length > 0) return;
+    if (form.allowedDomains.trim().length > 0) return;
+    const suggested = computeSuggestedAllowedDomains("");
+    if (suggested.trim().length > 0) setForm((prev) => ({ ...prev, allowedDomains: suggested }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [site.id]);
+
+  useEffect(() => {
+    // When primary URL is set/changed, keep sensible defaults in empty fields.
+    const next = { ...form };
+
+    // Always keep app domain + primary domain included.
+    next.allowedDomains = computeSuggestedAllowedDomains(next.allowedDomains);
+
+    if (next.scrapeSeedUrls.trim().length === 0 && next.primaryUrl.trim().length > 0) {
+      next.scrapeSeedUrls = normalizeHttps(next.primaryUrl.trim());
+    }
+
+    if (next.scrapeAllowedPrefixes.trim().length === 0 && next.primaryUrl.trim().length > 0) {
+      try {
+        const u = new URL(normalizeHttps(next.primaryUrl.trim()));
+        next.scrapeAllowedPrefixes = `${u.origin}/`;
+      } catch {
+        // ignore
+      }
+    }
+
+    // Avoid re-render loops if nothing actually changed.
+    if (
+      next.allowedDomains !== form.allowedDomains ||
+      next.scrapeSeedUrls !== form.scrapeSeedUrls ||
+      next.scrapeAllowedPrefixes !== form.scrapeAllowedPrefixes
+    ) {
+      setForm(next);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.primaryUrl]);
+
+  useEffect(() => {
+    // Enforce plan-based scrape tiers in the UI.
+    // FREE: basic+quick, PRO: allow wide+speedy, MAX: allow thorough+fastest.
+    const allowedCoverage =
+      plan === "MAX"
+        ? ["basic", "wide", "thorough"]
+        : plan === "PRO"
+          ? ["basic", "wide"]
+          : ["basic"];
+    const allowedSpeed =
+      plan === "MAX"
+        ? ["quick", "speedy", "fastest"]
+        : plan === "PRO"
+          ? ["quick", "speedy"]
+          : ["quick"];
+
+    const nextCoverage = allowedCoverage.includes(form.scrapeCoverage) ? form.scrapeCoverage : "basic";
+    const nextSpeed = allowedSpeed.includes(form.scrapeSpeed) ? form.scrapeSpeed : "quick";
+
+    if (nextCoverage !== form.scrapeCoverage || nextSpeed !== form.scrapeSpeed) {
+      setForm((prev) => ({ ...prev, scrapeCoverage: nextCoverage, scrapeSpeed: nextSpeed }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan, site.id]);
 
   const initialSnapshotRef = useRef<string>("");
   const lastDirtyRef = useRef<boolean>(false);
@@ -132,16 +233,11 @@ export function SiteConfigForm({
       greeting: site.greeting,
       primaryUrl: site.primaryUrl ?? "",
       logoUrl: site.logoUrl ?? "",
-      allowedDomains: site.allowedDomains.join(", "),
+      allowedDomains: stripImplicitDomains(site.allowedDomains).join(", "),
       allowedTopics: site.allowedTopics.join(", "),
       modelId: site.modelId,
       temperature: site.temperature,
-      pineconeIndex: site.pineconeIndex ?? "",
-      pineconeNs: site.pineconeNs ?? "",
       liveVersion: site.liveVersion,
-      livePineconePrefix: (
-        site as unknown as { livePineconePrefix?: string | null }
-      ).livePineconePrefix ?? `${site.id}-live-v-`,
       scrapeSeedUrls: Array.isArray((site.scrapeConfig as any)?.seed_urls)
         ? ((site.scrapeConfig as any).seed_urls as unknown[])
             .filter((v: unknown): v is string => typeof v === "string")
@@ -161,22 +257,22 @@ export function SiteConfigForm({
               return "";
             }
           })(),
-      scrapeMaxPages:
+      scrapeCoverage:
         typeof (site.scrapeConfig as any)?.max_pages === "number"
-          ? String((site.scrapeConfig as any).max_pages)
-          : "200",
-      scrapeDelay:
-        typeof (site.scrapeConfig as any)?.delay === "number"
-          ? String((site.scrapeConfig as any).delay)
-          : "0.5",
-      scrapeParallelWorkers:
+          ? ((site.scrapeConfig as any).max_pages as number) <= 10
+            ? "basic"
+            : ((site.scrapeConfig as any).max_pages as number) <= 50
+              ? "wide"
+              : "thorough"
+          : "thorough",
+      scrapeSpeed:
         typeof (site.scrapeConfig as any)?.parallel_workers === "number"
-          ? String((site.scrapeConfig as any).parallel_workers)
-          : "4",
-      scrapeUseSelenium:
-        typeof (site.scrapeConfig as any)?.use_selenium === "boolean"
-          ? Boolean((site.scrapeConfig as any).use_selenium)
-          : true,
+          ? ((site.scrapeConfig as any).parallel_workers as number) <= 3
+            ? "quick"
+            : ((site.scrapeConfig as any).parallel_workers as number) <= 7
+              ? "speedy"
+              : "fastest"
+          : "speedy",
     });
     initialSnapshotRef.current = snapshot;
     // Emit initial dirty state (false)
@@ -185,14 +281,184 @@ export function SiteConfigForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [site.id]);
 
-  const [kbAdvanced, setKbAdvanced] = useState(false);
   const [kbRunId, setKbRunId] = useState<string>("");
   const [kbStep, setKbStep] = useState<"idle" | "scrape" | "prepare" | "upload" | "done" | "error">(
     "idle"
   );
+  const [kbPipelineStatus, setKbPipelineStatus] = useState<string>("");
+  const [kbLoading, setKbLoading] = useState(false);
+  const [kbStarting, setKbStarting] = useState(false);
   const [kbError, setKbError] = useState<string>("");
-  const [kbLog, setKbLog] = useState<string>("");
+  const [kbUrls, setKbUrls] = useState<string[]>([]);
   const [kbErrorPhase, setKbErrorPhase] = useState<"scrape" | "prepare" | "upload" | null>(null);
+  const kbBootstrapSeq = useRef(0);
+  const kbStartInFlightRef = useRef(false);
+  const kbStartSeqRef = useRef(0);
+
+  const BrandingTab = () => (
+    <>
+      <Field label="Site name">
+        <input
+          value={form.name}
+          onChange={(e) => setForm({ ...form, name: e.target.value })}
+          className={inputCls}
+        />
+      </Field>
+      <Field label="Primary URL" hint="Where your widget will be embedded.">
+        <input
+          value={form.primaryUrl}
+          onChange={(e) =>
+            setForm({ ...form, primaryUrl: normalizeHttps(e.target.value) })
+          }
+          placeholder="https://client.com"
+          className={inputCls}
+        />
+      </Field>
+      <div className="flex gap-4">
+        <Field label="Primary color" className="flex-1">
+          <div className="flex gap-2">
+            <input
+              type="color"
+              value={form.primaryColor}
+              onChange={(e) =>
+                setForm({ ...form, primaryColor: e.target.value })
+              }
+              className="h-9 w-12 rounded-lg border border-gray-300 p-0.5 cursor-pointer"
+            />
+            <input
+              value={form.primaryColor}
+              onChange={(e) =>
+                setForm({ ...form, primaryColor: e.target.value })
+              }
+              className={`${inputCls} flex-1`}
+              placeholder="#6366f1"
+            />
+          </div>
+        </Field>
+        <Field label="Widget title" className="flex-1">
+          <input
+            value={form.title}
+            onChange={(e) => setForm({ ...form, title: e.target.value })}
+            className={inputCls}
+          />
+        </Field>
+      </div>
+      <Field
+        label="Logo"
+        hint="Upload a logo (stored in Postgres as base64). Optional."
+      >
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-xl border border-gray-200 bg-white flex items-center justify-center overflow-hidden">
+            {form.logoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={form.logoUrl}
+                alt="Logo preview"
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <div className="text-xs text-gray-400">logo</div>
+            )}
+          </div>
+          <input
+            type="file"
+            accept="image/*"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              const reader = new FileReader();
+              reader.onload = () => {
+                const result = reader.result;
+                if (typeof result === "string") {
+                  setForm({ ...form, logoUrl: result });
+                }
+              };
+              reader.readAsDataURL(file);
+            }}
+            className="block text-sm text-gray-700"
+          />
+          {form.logoUrl && (
+            <button
+              type="button"
+              onClick={() => setForm({ ...form, logoUrl: "" })}
+              className="text-sm font-medium text-gray-700 underline"
+            >
+              Remove
+            </button>
+          )}
+        </div>
+      </Field>
+      <Field label="Greeting message">
+        <textarea
+          value={form.greeting}
+          onChange={(e) => setForm({ ...form, greeting: e.target.value })}
+          rows={3}
+          className={`${inputCls} resize-none`}
+        />
+      </Field>
+    </>
+  );
+
+  const BehaviorTab = () => (
+    <>
+      <Field
+        label="Allowed domains"
+        hint="Comma-separated. Includes your app + primary URL by default."
+      >
+        <div className="space-y-2">
+          <input
+            value={form.allowedDomains}
+            onChange={(e) => setForm({ ...form, allowedDomains: e.target.value })}
+            placeholder="example.com, app.example.com"
+            className={inputCls}
+          />
+          <span className="text-[11px] text-gray-500">
+            Example: <span className="font-mono">example.com</span>
+          </span>
+        </div>
+      </Field>
+      <Field
+        label="Allowed topics / scope"
+        hint="Keywords that define what the widget answers. Comma-separated."
+      >
+        <input
+          value={form.allowedTopics}
+          onChange={(e) => setForm({ ...form, allowedTopics: e.target.value })}
+          placeholder="pricing, features, docs"
+          className={inputCls}
+        />
+      </Field>
+      <Field label="Model">
+        <select
+          value={form.modelId}
+          onChange={(e) => setForm({ ...form, modelId: e.target.value })}
+          className={inputCls}
+        >
+          {MODELS.map((m) => {
+            const disabled = plan === "FREE" && m.id !== FREE_MODEL_ID;
+            return (
+              <option key={m.id} value={m.id} disabled={disabled}>
+                {disabled ? `${m.label} — Pro/Max` : m.label}
+              </option>
+            );
+          })}
+        </select>
+      </Field>
+      <Field label={`Temperature: ${form.temperature}`}>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.05}
+          value={form.temperature}
+          onChange={(e) =>
+            setForm({ ...form, temperature: parseFloat(e.target.value) })
+          }
+          className="w-full accent-indigo-600"
+        />
+      </Field>
+    </>
+  );
 
   const updateSite = api.sites.update.useMutation({
     onSuccess: () => {
@@ -203,16 +469,18 @@ export function SiteConfigForm({
     },
   });
 
-  const resolvedPinecone = resolvePineconeTarget(
-    {
-      id: site.id,
-      liveVersion: form.liveVersion,
-      pineconeIndex: form.pineconeIndex || null,
-      pineconeNs: form.pineconeNs || null,
-    },
-    defaultPineconeIndex,
-    defaultPineconeIndexHost || undefined,
-  );
+  const maxPagesByCoverage = (coverage: string) => {
+    if (coverage === "basic") return 10;
+    if (coverage === "wide") return 50;
+    // MAX tier gets the large crawl.
+    return plan === "MAX" ? 1000 : 200;
+  };
+
+  const workersBySpeed = (speed: string) => {
+    if (speed === "quick") return 3;
+    if (speed === "fastest") return 10;
+    return 7; // speedy
+  };
 
   function save() {
     updateSite.mutate({
@@ -233,10 +501,7 @@ export function SiteConfigForm({
         .filter(Boolean),
       modelId: form.modelId,
       temperature: form.temperature,
-      pineconeIndex: form.pineconeIndex || null,
-      pineconeNs: form.pineconeNs || null,
       liveVersion: form.liveVersion,
-      livePineconePrefix: form.livePineconePrefix.trim() || null,
       scrapeConfig: {
         seed_urls: form.scrapeSeedUrls
           .split("\n")
@@ -246,10 +511,9 @@ export function SiteConfigForm({
           .split("\n")
           .map((s) => s.trim())
           .filter(Boolean),
-        max_pages: Number(form.scrapeMaxPages || 200),
-        delay: Number(form.scrapeDelay || 0.5),
-        parallel_workers: Number(form.scrapeParallelWorkers || 4),
-        use_selenium: !!form.scrapeUseSelenium,
+        max_pages: maxPagesByCoverage(form.scrapeCoverage),
+        delay: 0.5,
+        parallel_workers: workersBySpeed(form.scrapeSpeed),
         respect_allowed_prefixes: true,
       },
     });
@@ -288,126 +552,202 @@ export function SiteConfigForm({
     }
   }
 
-  async function kbScrape() {
+  const isKbPolling =
+    Boolean(kbRunId) &&
+    kbStep !== "done" &&
+    kbStep !== "error" &&
+    (kbPipelineStatus === "" ||
+      (kbPipelineStatus !== "succeeded" &&
+        kbPipelineStatus !== "failed" &&
+        kbPipelineStatus !== "aborted"));
+
+  // Simplified KB tab bootstrap: on entering the Knowledge tab, load latest run from DB.
+  useEffect(() => {
+    if (tab !== "knowledge") return;
+
+    let cancelled = false;
+    const seq = ++kbBootstrapSeq.current;
+    (async () => {
+      setKbLoading(true);
+      setKbError("");
+      setKbErrorPhase(null);
+      try {
+        const res = await fetch(
+          `/api/v1/knowledge-base/run/latest?siteId=${encodeURIComponent(site.id)}`,
+          { cache: "no-store" },
+        );
+        const json = (await readResponseJson(res)) as any;
+        if (!res.ok) throw new Error(json?.error ?? `Failed to load KB run (${res.status})`);
+        if (cancelled || kbBootstrapSeq.current !== seq) return;
+
+        if (!json?.hasRun) {
+          setKbRunId("");
+          setKbPipelineStatus("");
+          setKbStep("idle");
+          setKbUrls([]);
+          return;
+        }
+
+        const runId = typeof json?.runId === "string" ? json.runId.trim() : "";
+        const pipelineStatus = typeof json?.pipelineStatus === "string" ? json.pipelineStatus : "";
+        const done = Boolean(json?.done);
+
+        setKbRunId(runId);
+        setKbPipelineStatus(pipelineStatus);
+
+        const cached = json?.cachedStatus ?? null;
+        if (cached) {
+          const text = JSON.stringify(cached);
+          const matches = text.match(/https?:\/\/[^\s"'<>]+/g) ?? [];
+          if (matches.length) setKbUrls(Array.from(new Set(matches)).slice(-50));
+        } else {
+          setKbUrls([]);
+        }
+
+        if (done || pipelineStatus === "succeeded") setKbStep("done");
+        else if (pipelineStatus === "failed" || pipelineStatus === "aborted") setKbStep("error");
+        else setKbStep("scrape");
+      } catch (e: any) {
+        if (cancelled || kbBootstrapSeq.current !== seq) return;
+        setKbStep("error");
+        setKbErrorPhase("scrape");
+        setKbError(typeof e?.message === "string" ? e.message : "Failed to load knowledge base");
+      } finally {
+        if (!cancelled && kbBootstrapSeq.current === seq) setKbLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [site.id, tab]);
+
+  useEffect(() => {
+    if (!kbRunId) return;
+    if (!isKbPolling) return;
+
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const res = await fetch(
+          `/api/v1/knowledge-base/run/status?siteId=${encodeURIComponent(site.id)}&runId=${encodeURIComponent(kbRunId)}`,
+          { cache: "no-store" },
+        );
+        const json = (await readResponseJson(res)) as any;
+        if (!res.ok) throw new Error(json?.error ?? `Status failed (${res.status})`);
+        if (cancelled) return;
+
+        const pipelineStatus = (json?.pipeline_status as string | undefined) ?? "";
+        const currentStep = (json?.current_step as string | undefined) ?? "";
+        setKbPipelineStatus(pipelineStatus);
+
+        // Map run status -> our 3-step progress UI.
+        if (pipelineStatus === "succeeded") {
+          setKbStep("done");
+          router.refresh();
+        } else if (pipelineStatus === "failed" || pipelineStatus === "aborted") {
+          setKbStep("error");
+          setKbErrorPhase(currentStep === "prepare" || currentStep === "upload" ? (currentStep as any) : "scrape");
+          setKbError("Knowledge base run failed.");
+        } else {
+          if (currentStep === "prepare") setKbStep("prepare");
+          else if (currentStep === "upload") setKbStep("upload");
+          else setKbStep("scrape");
+        }
+
+        // Keep harvesting URLs from the polled state (best-effort).
+        const text = JSON.stringify(json);
+        const matches = text.match(/https?:\/\/[^\s"'<>]+/g) ?? [];
+        if (matches.length) {
+          const next = Array.from(new Set([...matches])).slice(-50);
+          setKbUrls(next);
+        }
+      } catch (e: any) {
+        if (cancelled) return;
+        setKbErrorPhase("scrape");
+        setKbStep("error");
+        setKbError(typeof e?.message === "string" ? e.message : "Status polling failed");
+      }
+    };
+
+    void tick();
+    const interval = setInterval(() => void tick(), 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [isKbPolling, kbRunId, router, site.id]);
+
+  async function runKbPipeline() {
+    // Synchronous guard: React state updates are async, so double-clicks can
+    // otherwise fire multiple start requests before the button disables.
+    if (kbStartInFlightRef.current) return;
+    kbStartInFlightRef.current = true;
+    const startSeq = ++kbStartSeqRef.current;
+
     setKbError("");
-    setKbLog("");
     setKbErrorPhase(null);
+    setKbPipelineStatus("");
+    setKbUrls([]);
     setKbStep("scrape");
-    try {
-      const scrape = {
-        seed_urls: form.scrapeSeedUrls
-          .split("\n")
-          .map((s) => s.trim())
-          .filter(Boolean),
-        allowed_prefixes: form.scrapeAllowedPrefixes
-          .split("\n")
-          .map((s) => s.trim())
-          .filter(Boolean),
-        max_pages: Number(form.scrapeMaxPages || 200),
-        delay: Number(form.scrapeDelay || 0.5),
-        parallel_workers: Number(form.scrapeParallelWorkers || 4),
-        use_selenium: !!form.scrapeUseSelenium,
-        respect_allowed_prefixes: true,
-      };
-      const res = await fetch("/api/v1/knowledge-base/scrape", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ siteId: site.id, scrape }),
-      });
-      const json = (await readResponseJson(res)) as any;
-      if (!res.ok) {
-        throw new Error(json?.error?.message ?? json?.error ?? `Scrape failed (${res.status})`);
-      }
-      const runId = json?.run_id as string | undefined;
-      if (!runId) throw new Error("Scrape succeeded but no run_id returned");
-      setKbRunId(runId);
-      setKbLog(JSON.stringify(json, null, 2));
-      return runId;
-    } catch (e: any) {
-      console.warn("KB scrape failed", e);
-      setKbErrorPhase("scrape");
-      setKbStep("error");
-      setKbError("Something went wrong on our side.");
-      setKbLog(
-        typeof e?.message === "string" && e.message.trim()
-          ? e.message
-          : JSON.stringify(e, null, 2),
-      );
-      throw e;
-    }
-  }
+    setKbLoading(false);
+    setKbStarting(true);
+    // Cancel any in-flight "latest run" load so it can't overwrite the new run state.
+    kbBootstrapSeq.current++;
 
-  async function kbPrepare(runId: string) {
-    setKbStep("prepare");
     try {
-      const res = await fetch("/api/v1/knowledge-base/prepare", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ siteId: site.id, runId }),
-      });
-      const json = (await readResponseJson(res)) as any;
-      if (!res.ok) {
-        throw new Error(json?.error?.message ?? json?.error ?? `Prepare failed (${res.status})`);
-      }
-      setKbLog(JSON.stringify(json, null, 2));
-    } catch (e: any) {
-      console.warn("KB prepare failed", e);
-      setKbErrorPhase("prepare");
-      setKbStep("error");
-      setKbError("Something went wrong on our side.");
-      setKbLog(
-        typeof e?.message === "string" && e.message.trim()
-          ? e.message
-          : JSON.stringify(e, null, 2),
-      );
-      throw e;
-    }
-  }
-
-  async function kbUpload(runId: string) {
-    setKbStep("upload");
-    try {
-      const res = await fetch("/api/v1/knowledge-base/upload", {
+      const res = await fetch("/api/v1/knowledge-base/run/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           siteId: site.id,
-          runId,
-          livePrefix: form.livePineconePrefix.trim(),
-          // Small debugging defaults; you can remove/raise later
-          maxRecords: kbAdvanced ? undefined : 500,
-          batchSize: 100,
-          embedBatchSize: 32,
-          embedWorkers: 1,
+        maxRecords: 500,
         }),
       });
       const json = (await readResponseJson(res)) as any;
-      if (!res.ok) {
-        throw new Error(json?.error?.message ?? json?.error ?? `Upload failed (${res.status})`);
-      }
-      setKbLog(JSON.stringify(json, null, 2));
-      setKbStep("done");
-      router.refresh();
-    } catch (e: any) {
-      console.warn("KB upload failed", e);
-      setKbErrorPhase("upload");
-      setKbStep("error");
-      setKbError("Something went wrong on our side.");
-      setKbLog(
-        typeof e?.message === "string" && e.message.trim()
-          ? e.message
-          : JSON.stringify(e, null, 2),
-      );
-      throw e;
-    }
-  }
+      if (!res.ok) throw new Error(json?.error ?? `Failed to start run (${res.status})`);
+      const runId = json?.run_id as string | undefined;
+      if (!runId) throw new Error("Run started but no run_id returned");
 
-  async function runKbPipeline() {
-    setKbError("");
-    setKbErrorPhase(null);
-    const runId = await kbScrape();
-    await kbPrepare(runId);
-    await kbUpload(runId);
+      // If a newer start was initiated while this request was in flight, ignore this result.
+      if (kbStartSeqRef.current === startSeq) {
+        setKbRunId(runId);
+        setKbPipelineStatus("queued");
+        setKbStep("scrape");
+
+        // Kick an immediate status fetch so the UI doesn't look "stuck" until
+        // the polling loop ticks and the scraper updates state.
+        try {
+          const sres = await fetch(
+            `/api/v1/knowledge-base/run/status?siteId=${encodeURIComponent(site.id)}&runId=${encodeURIComponent(runId)}`,
+            { cache: "no-store" },
+          );
+          const sjson = (await readResponseJson(sres)) as any;
+          if (sres.ok) {
+            const pipelineStatus = (sjson?.pipeline_status as string | undefined) ?? "";
+            const currentStep = (sjson?.current_step as string | undefined) ?? "";
+            if (pipelineStatus) setKbPipelineStatus(pipelineStatus);
+            if (currentStep === "prepare") setKbStep("prepare");
+            else if (currentStep === "upload") setKbStep("upload");
+            else if (pipelineStatus === "succeeded") setKbStep("done");
+            else if (pipelineStatus === "failed" || pipelineStatus === "aborted") setKbStep("error");
+
+            const text = JSON.stringify(sjson);
+            const matches = text.match(/https?:\/\/[^\s"'<>]+/g) ?? [];
+            if (matches.length) {
+              setKbUrls(Array.from(new Set(matches)).slice(-50));
+            }
+          }
+        } catch {
+          // ignore; polling will retry
+        }
+      }
+    } finally {
+      if (kbStartSeqRef.current === startSeq) {
+        setKbStarting(false);
+      }
+      kbStartInFlightRef.current = false;
+    }
   }
 
   const tabDone = useMemo(() => {
@@ -510,229 +850,223 @@ export function SiteConfigForm({
       </div>
 
       <div className="p-6 space-y-5">
-        {tab === "branding" && (
-          <>
-            <Field label="Site name">
-              <input
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                className={inputCls}
-              />
-            </Field>
-            <Field label="Primary URL" hint="Where your widget will be embedded.">
-              <input
-                value={form.primaryUrl}
-                onChange={(e) =>
-                  setForm({ ...form, primaryUrl: normalizeHttps(e.target.value) })
-                }
-                placeholder="https://client.com"
-                className={inputCls}
-              />
-            </Field>
-            <div className="flex gap-4">
-              <Field label="Primary color" className="flex-1">
-                <div className="flex gap-2">
-                  <input
-                    type="color"
-                    value={form.primaryColor}
-                    onChange={(e) =>
-                      setForm({ ...form, primaryColor: e.target.value })
-                    }
-                    className="h-9 w-12 rounded-lg border border-gray-300 p-0.5 cursor-pointer"
-                  />
-                  <input
-                    value={form.primaryColor}
-                    onChange={(e) =>
-                      setForm({ ...form, primaryColor: e.target.value })
-                    }
-                    className={`${inputCls} flex-1`}
-                    placeholder="#6366f1"
-                  />
-                </div>
-              </Field>
-              <Field label="Widget title" className="flex-1">
-                <input
-                  value={form.title}
-                  onChange={(e) => setForm({ ...form, title: e.target.value })}
-                  className={inputCls}
-                />
-              </Field>
-            </div>
-            <Field
-              label="Logo"
-              hint="Upload a logo (stored in Postgres as base64). Optional."
-            >
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-xl border border-gray-200 bg-white flex items-center justify-center overflow-hidden">
-                  {form.logoUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={form.logoUrl}
-                      alt="Logo preview"
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div className="text-xs text-gray-400">logo</div>
-                  )}
-                </div>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    const reader = new FileReader();
-                    reader.onload = () => {
-                      const result = reader.result;
-                      if (typeof result === "string") {
-                        setForm({ ...form, logoUrl: result });
-                      }
-                    };
-                    reader.readAsDataURL(file);
-                  }}
-                  className="block text-sm text-gray-700"
-                />
-                {form.logoUrl && (
-                  <button
-                    type="button"
-                    onClick={() => setForm({ ...form, logoUrl: "" })}
-                    className="text-sm font-medium text-gray-700 underline"
-                  >
-                    Remove
-                  </button>
-                )}
-              </div>
-            </Field>
-            <Field label="Greeting message">
-              <textarea
-                value={form.greeting}
-                onChange={(e) =>
-                  setForm({ ...form, greeting: e.target.value })
-                }
-                rows={3}
-                className={`${inputCls} resize-none`}
-              />
-            </Field>
-          </>
-        )}
+        {tab === "branding" ? <BrandingTab /> : null}
 
-        {tab === "behavior" && (
-          <>
-            <Field
-              label="Allowed domains"
-              hint="Leave empty to allow all. Comma-separated."
-            >
-              <input
-                value={form.allowedDomains}
-                onChange={(e) =>
-                  setForm({ ...form, allowedDomains: e.target.value })
-                }
-                placeholder="example.com, app.example.com"
-                className={inputCls}
-              />
-            </Field>
-            <Field
-              label="Allowed topics / scope"
-              hint="Keywords that define what the widget answers. Comma-separated."
-            >
-              <input
-                value={form.allowedTopics}
-                onChange={(e) =>
-                  setForm({ ...form, allowedTopics: e.target.value })
-                }
-                placeholder="pricing, features, docs"
-                className={inputCls}
-              />
-            </Field>
-            <Field label="Model">
-              <select
-                value={form.modelId}
-                onChange={(e) =>
-                  setForm({ ...form, modelId: e.target.value })
-                }
-                className={inputCls}
-              >
-                {MODELS.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label={`Temperature: ${form.temperature}`}>
-              <input
-                type="range"
-                min={0}
-                max={1.5}
-                step={0.05}
-                value={form.temperature}
-                onChange={(e) =>
-                  setForm({ ...form, temperature: parseFloat(e.target.value) })
-                }
-                className="w-full accent-indigo-600"
-              />
-            </Field>
-          </>
-        )}
+        {tab === "behavior" ? <BehaviorTab /> : null}
 
         {tab === "knowledge" && (
           <>
             <div className="rounded-3xl border border-gray-200 bg-white px-5 py-5 shadow-sm">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <div className="inline-flex items-center gap-2 rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold text-gray-700">
-                    Knowledge base
-                    <span className="text-gray-400">•</span>
-                    Scrape → Prepare → Upload
+              {(() => {
+                const status =
+                  kbLoading
+                    ? { tone: "muted", label: "Loading…" }
+                    : kbStarting
+                      ? { tone: "muted", label: "Starting…" }
+                      : isKbPolling
+                        ? { tone: "live", label: "Scraping in progress" }
+                        : kbStep === "done"
+                          ? { tone: "ok", label: "Up to date" }
+                          : kbStep === "error"
+                            ? { tone: "error", label: "Needs attention" }
+                            : kbRunId
+                              ? { tone: "muted", label: "Last run loaded" }
+                              : { tone: "muted", label: "Not scraped yet" };
+
+                const statusCls =
+                  status.tone === "live"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : status.tone === "ok"
+                      ? "border-green-200 bg-green-50 text-green-800"
+                      : status.tone === "error"
+                        ? "border-red-200 bg-red-50 text-red-800"
+                        : "border-gray-200 bg-gray-50 text-gray-700";
+
+                const primaryLabel =
+                  kbStarting
+                    ? "Starting…"
+                    : isKbPolling
+                      ? "Running…"
+                      : kbRunId
+                        ? "Refresh knowledge base"
+                        : "Start scraping";
+
+                return (
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-base font-semibold text-gray-900">
+                          Knowledge base
+                        </p>
+                        <div
+                          className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${statusCls}`}
+                        >
+                          {status.tone === "live" ? (
+                            <span className="relative inline-flex h-2.5 w-2.5">
+                              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                            </span>
+                          ) : (
+                            <span
+                              className={`h-2 w-2 rounded-full ${
+                                status.tone === "ok"
+                                  ? "bg-green-500"
+                                  : status.tone === "error"
+                                    ? "bg-red-500"
+                                    : "bg-gray-400"
+                              }`}
+                            />
+                          )}
+                          <span>{status.label}</span>
+                        </div>
+                      </div>
+                      <p className="mt-1 text-sm text-gray-600">
+                        We’ll crawl your site and keep answers grounded in your pages.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-col gap-2 sm:items-end">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void runKbPipeline()}
+                          disabled={isKbPolling || kbLoading || kbStarting}
+                          className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60"
+                        >
+                          {primaryLabel}
+                        </button>
+                        {isKbPolling && kbRunId ? (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                await fetch("/api/v1/knowledge-base/run/stop", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ siteId: site.id, runId: kbRunId }),
+                                });
+                              } finally {
+                                setKbPipelineStatus("aborted");
+                                setKbStep("error");
+                                setKbErrorPhase("scrape");
+                                setKbError("Stop requested.");
+                              }
+                            }}
+                            className="rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                          >
+                            Stop
+                          </button>
+                        ) : null}
+                      </div>
+
+                      <p className="text-xs text-gray-500">
+                        {kbRunId ? "Showing the latest run for this site." : "No runs yet."}
+                      </p>
+
+                      {/* Coverage / speed controls appear after URL + prefix inputs */}
+                    </div>
                   </div>
-                  <p className="mt-3 text-base font-semibold text-gray-900">
-                    Refresh your content
-                  </p>
-                  <p className="mt-1 text-sm text-gray-600">
-                    Scrape your website/docs and upload the cleaned knowledge to Pinecone.
-                  </p>
+                );
+              })()}
+
+              <Field label="Scrape config" hint="Set what to crawl and how fast.">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-gray-600">Seed URLs</label>
+                    <UrlListInput
+                      value={form.scrapeSeedUrls}
+                      placeholder="https://example.com/docs"
+                      normalize={normalizeHttps}
+                      onChange={(next) => setForm({ ...form, scrapeSeedUrls: next })}
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-gray-600">Allowed prefixes</label>
+                    <UrlListInput
+                      value={form.scrapeAllowedPrefixes}
+                      placeholder="https://example.com/docs/"
+                      normalize={normalizeHttps}
+                      onChange={(next) => setForm({ ...form, scrapeAllowedPrefixes: next })}
+                    />
+                  </div>
                 </div>
-                <div className="flex flex-col gap-2 sm:items-end">
-                  <button
-                    type="button"
-                    onClick={() => void runKbPipeline()}
-                    disabled={kbStep === "scrape" || kbStep === "prepare" || kbStep === "upload"}
-                    className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60"
-                  >
-                    {kbStep === "scrape" || kbStep === "prepare" || kbStep === "upload"
-                      ? "Refreshing…"
-                      : "Refresh knowledge base"}
-                  </button>
-                  {kbRunId ? (
-                    <p className="text-xs text-gray-500">
-                      Run: <span className="font-mono">{kbRunId}</span>
-                    </p>
-                  ) : (
-                    <p className="text-xs text-gray-500">Takes ~1–3 minutes.</p>
-                  )}
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <Field label="🧭 Coverage">
+                    <select
+                      value={form.scrapeCoverage}
+                      onChange={(e) => setForm({ ...form, scrapeCoverage: e.target.value })}
+                      className={inputCls}
+                    >
+                      <option value="basic">Basic (10 pages)</option>
+                      <option value="wide" disabled={plan === "FREE"}>
+                        {plan === "FREE" ? "Wide (50 pages) — Pro/Max" : "Wide (50 pages)"}
+                      </option>
+                      <option value="thorough" disabled={plan !== "MAX"}>
+                        {plan === "MAX"
+                          ? "Thorough (1000 pages)"
+                          : "Thorough (1000 pages) — Max"}
+                      </option>
+                    </select>
+                  </Field>
+                  <Field label="⚡ Speed">
+                    <select
+                      value={form.scrapeSpeed}
+                      onChange={(e) => setForm({ ...form, scrapeSpeed: e.target.value })}
+                      className={inputCls}
+                    >
+                      <option value="quick">Quick (3 workers)</option>
+                      <option value="speedy" disabled={plan === "FREE"}>
+                        {plan === "FREE" ? "Speedy (7 workers) — Pro/Max" : "Speedy (7 workers)"}
+                      </option>
+                      <option value="fastest" disabled={plan !== "MAX"}>
+                        {plan === "MAX"
+                          ? "Fastest (10 workers)"
+                          : "Fastest (10 workers) — Max"}
+                      </option>
+                    </select>
+                  </Field>
                 </div>
-              </div>
+              </Field>
+
+              {/* Coverage / speed controls live top-right */}
 
               <div className="mt-5 grid grid-cols-3 gap-2">
                 <ProgressStep
-                  label="Scrape"
-                  processing={kbStep === "scrape"}
-                  completed={
-                    kbStep === "prepare" || kbStep === "upload" || kbStep === "done"
+                  label="Scraping"
+                  state={
+                    kbStep === "error" && kbErrorPhase === "scrape"
+                      ? "failed"
+                      : kbStep === "scrape"
+                        ? "in_progress"
+                        : kbStep === "prepare" || kbStep === "upload" || kbStep === "done"
+                          ? "done"
+                          : "not_started"
                   }
-                  error={kbStep === "error" && kbErrorPhase === "scrape"}
                 />
                 <ProgressStep
-                  label="Prepare"
-                  processing={kbStep === "prepare"}
-                  completed={kbStep === "upload" || kbStep === "done"}
-                  error={kbStep === "error" && kbErrorPhase === "prepare"}
+                  label="Cleaning"
+                  state={
+                    kbStep === "error" && kbErrorPhase === "prepare"
+                      ? "failed"
+                      : kbStep === "prepare"
+                        ? "in_progress"
+                        : kbStep === "upload" || kbStep === "done"
+                          ? "done"
+                          : "not_started"
+                  }
                 />
                 <ProgressStep
-                  label="Upload"
-                  processing={kbStep === "upload"}
-                  completed={kbStep === "done"}
-                  error={kbStep === "error" && kbErrorPhase === "upload"}
+                  label="Indexing"
+                  state={
+                    kbStep === "error" && kbErrorPhase === "upload"
+                      ? "failed"
+                      : kbStep === "upload"
+                        ? "in_progress"
+                        : kbStep === "done"
+                          ? "done"
+                          : "not_started"
+                  }
                 />
               </div>
 
@@ -742,199 +1076,74 @@ export function SiteConfigForm({
                 </div>
               ) : null}
 
-              {kbLog ? (
-                <details className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3">
-                  <summary className="cursor-pointer text-sm font-semibold text-gray-800">
-                    View run details
+              {kbUrls.length > 0 ? (
+                <details
+                  className="mt-4 rounded-2xl border border-green-200 bg-green-50 px-4 py-3"
+                  open={isKbPolling}
+                >
+                  <summary className="cursor-pointer select-none">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <span className="relative inline-flex h-2.5 w-2.5">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                        </span>
+                        <p className="text-sm font-semibold text-green-900">
+                          {isKbPolling ? "Scraping…" : "Scraped URLs"}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {!isKbPolling ? (
+                          <span className="hidden max-w-[22rem] truncate text-[11px] font-medium text-green-800 sm:inline">
+                            Latest: {kbUrls[kbUrls.length - 1]}
+                          </span>
+                        ) : null}
+                        <span className="text-xs font-medium text-green-800">
+                          {kbUrls.length} URLs
+                        </span>
+                      </div>
+                    </div>
                   </summary>
-                  <pre className="mt-3 max-h-64 overflow-auto rounded-xl bg-white border border-gray-200 p-3 text-xs">
-{kbLog}
-                  </pre>
+                  <div className="mt-3 max-h-64 overflow-auto rounded-xl border border-green-200 bg-white/80 p-2">
+                    <ul className="space-y-1 text-xs text-gray-800">
+                      {kbUrls
+                        .slice()
+                        .reverse()
+                        .map((u) => (
+                          <li
+                            key={u}
+                            className="group flex items-start justify-between gap-2 rounded-lg px-2 py-1 hover:bg-green-50"
+                          >
+                            <a
+                              href={u}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="min-w-0 break-all text-green-900 underline decoration-green-200 underline-offset-2 hover:decoration-green-400"
+                            >
+                              {u}
+                            </a>
+                            <button
+                              type="button"
+                              onClick={async (e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                try {
+                                  await navigator.clipboard.writeText(u);
+                                } catch {
+                                  // ignore
+                                }
+                              }}
+                              className="shrink-0 rounded-md border border-green-200 bg-white px-2 py-0.5 text-[11px] font-medium text-green-900 opacity-0 shadow-sm transition-opacity hover:bg-green-50 group-hover:opacity-100"
+                              title="Copy URL"
+                            >
+                              Copy
+                            </button>
+                          </li>
+                        ))}
+                    </ul>
+                  </div>
                 </details>
               ) : null}
-            </div>
-
-            <Field label="Scrape config" hint="Keep it simple: set the crawl entrypoints and limits.">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-600">Seed URLs</label>
-                  <UrlListInput
-                    value={form.scrapeSeedUrls}
-                    placeholder="https://example.com/docs"
-                    normalize={normalizeHttps}
-                    onChange={(next) => setForm({ ...form, scrapeSeedUrls: next })}
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-600">Allowed prefixes</label>
-                  <UrlListInput
-                    value={form.scrapeAllowedPrefixes}
-                    placeholder="https://example.com/docs/"
-                    normalize={normalizeHttps}
-                    onChange={(next) => setForm({ ...form, scrapeAllowedPrefixes: next })}
-                  />
-                </div>
-              </div>
-            </Field>
-
-            <div className="grid gap-4 sm:grid-cols-3">
-              <Field label="Max pages">
-                <input
-                  value={form.scrapeMaxPages}
-                  onChange={(e) => setForm({ ...form, scrapeMaxPages: e.target.value })}
-                  className={inputCls}
-                />
-              </Field>
-              <div className="sm:col-span-2">
-                <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
-                  <p className="text-sm font-semibold text-gray-900">Advanced</p>
-                  <p className="mt-1 text-xs text-gray-500">
-                    Tuning, Selenium, and Pinecone settings live here.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setKbAdvanced((v) => !v)}
-                    className="mt-3 inline-flex items-center rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
-                  >
-                    {kbAdvanced ? "Hide advanced" : "Show advanced"}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {kbAdvanced ? (
-              <>
-                <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                  <p className="text-sm font-semibold text-gray-900">Scrape tuning</p>
-                  <div className="mt-4 grid gap-4 sm:grid-cols-3">
-                    <Field label="Delay (seconds)">
-                      <input
-                        value={form.scrapeDelay}
-                        onChange={(e) =>
-                          setForm({ ...form, scrapeDelay: e.target.value })
-                        }
-                        className={inputCls}
-                      />
-                    </Field>
-                    <Field label="Parallel workers">
-                      <input
-                        value={form.scrapeParallelWorkers}
-                        onChange={(e) =>
-                          setForm({ ...form, scrapeParallelWorkers: e.target.value })
-                        }
-                        className={inputCls}
-                      />
-                    </Field>
-                    <Field label="Use Selenium">
-                      <label className="flex items-center gap-2 text-sm text-gray-700">
-                        <input
-                          type="checkbox"
-                          checked={form.scrapeUseSelenium}
-                          onChange={(e) =>
-                            setForm({ ...form, scrapeUseSelenium: e.target.checked })
-                          }
-                          className="h-4 w-4 accent-indigo-600"
-                        />
-                        Render pages
-                      </label>
-                    </Field>
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                  <p className="text-sm font-semibold text-gray-900">Upload settings</p>
-                  <Field
-                    label="Live prefix"
-                    hint="Editable. The pipeline will create namespaces like {prefix}1, {prefix}2, …"
-                  >
-                    <input
-                      value={form.livePineconePrefix}
-                      onChange={(e) =>
-                        setForm({ ...form, livePineconePrefix: e.target.value })
-                      }
-                      className={inputCls}
-                    />
-                  </Field>
-                </div>
-
-                <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                  <p className="text-sm font-semibold text-gray-900">Pinecone target</p>
-                  <Field
-                    label="Pinecone index"
-                    hint="Leave empty to use the default index from env."
-                  >
-                    <input
-                      value={form.pineconeIndex}
-                      onChange={(e) =>
-                        setForm({ ...form, pineconeIndex: e.target.value })
-                      }
-                      placeholder="roboracer (default)"
-                      className={inputCls}
-                    />
-                  </Field>
-                  <Field
-                    label="Namespace override"
-                    hint="Leave empty to use the latest live namespace (recommended)."
-                  >
-                    <input
-                      value={form.pineconeNs}
-                      onChange={(e) =>
-                        setForm({ ...form, pineconeNs: e.target.value })
-                      }
-                      placeholder="my-namespace"
-                      className={inputCls}
-                    />
-                  </Field>
-                  <Field label="Live version">
-                    <input
-                      type="number"
-                      min={1}
-                      value={form.liveVersion}
-                      onChange={(e) =>
-                        setForm({ ...form, liveVersion: parseInt(e.target.value) })
-                      }
-                      className={inputCls}
-                    />
-                  </Field>
-                </div>
-              </>
-            ) : null}
-            <div className="rounded-xl border border-indigo-100 bg-indigo-50/80 px-4 py-3 text-sm text-gray-800">
-              <p className="font-semibold text-indigo-900">
-                Effective Pinecone target (chat + ingest)
-              </p>
-              <p className="mt-2 font-mono text-xs break-all">
-                <span className="text-gray-500">index:</span>{" "}
-                {resolvedPinecone.indexName}
-                <span className="ml-2 text-gray-400">
-                  ({resolvedPinecone.indexSource === "env" ? "from env" : "site override"})
-                </span>
-              </p>
-              {resolvedPinecone.indexHostUrl ? (
-                <p className="mt-1 font-mono text-xs break-all">
-                  <span className="text-gray-500">host:</span>{" "}
-                  {resolvedPinecone.indexHostUrl}
-                  <span className="ml-2 text-gray-400">(from env)</span>
-                </p>
-              ) : (
-                <p className="mt-1 font-mono text-xs break-all">
-                  <span className="text-gray-500">host:</span>{" "}
-                  <span className="text-gray-400">
-                    (auto-resolved by Pinecone SDK)
-                  </span>
-                </p>
-              )}
-              <p className="mt-1 font-mono text-xs break-all">
-                <span className="text-gray-500">namespace:</span>{" "}
-                {resolvedPinecone.namespace}
-                <span className="ml-2 text-gray-400">
-                  (
-                  {resolvedPinecone.namespaceSource === "derived"
-                    ? `derived from site id + live v${form.liveVersion}`
-                    : "site override"}
-                  )
-                </span>
-              </p>
             </div>
           </>
         )}
@@ -962,41 +1171,50 @@ export function SiteConfigForm({
 
 function ProgressStep({
   label,
-  processing,
-  completed,
-  error,
+  state,
 }: {
   label: string;
-  processing: boolean;
-  completed: boolean;
-  error?: boolean;
+  state: "not_started" | "in_progress" | "done" | "failed";
 }) {
+  const isProcessing = state === "in_progress";
+  const isDone = state === "done";
+  const isFailed = state === "failed";
+
   return (
     <div
       className={`relative flex min-h-[2.5rem] items-center gap-2 overflow-hidden rounded-lg border px-3 py-2 ${
-        error ? "border-red-200 bg-red-50/80" : "border-gray-200 bg-white"
+        isFailed
+          ? "border-red-200 bg-red-50/80"
+          : isProcessing
+            ? "border-amber-200 bg-amber-50/60"
+            : isDone
+              ? "border-emerald-200 bg-emerald-50/70"
+            : "border-gray-200 bg-white"
       }`}
     >
-      {processing ? (
-        <>
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0 bg-gradient-to-r from-emerald-100/0 via-emerald-200/55 to-emerald-100/0"
+      <span className="relative z-[1] flex h-2.5 w-2.5 shrink-0 items-center justify-center">
+        {isProcessing ? (
+          <span className="relative inline-flex h-2.5 w-2.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
+          </span>
+        ) : (
+          <span
+            className={`inline-flex h-2.5 w-2.5 rounded-full ${
+              isFailed ? "bg-red-500" : isDone ? "bg-emerald-500" : "bg-gray-300"
+            }`}
           />
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-y-0 -left-1/2 w-1/2 bg-gradient-to-r from-transparent via-emerald-300/35 to-transparent animate-kb-step-sweep"
-          />
-        </>
-      ) : null}
-      <span
-        className={`relative z-[1] h-2.5 w-2.5 shrink-0 rounded-full ${
-          error ? "bg-red-500" : completed ? "bg-emerald-500" : "bg-gray-300"
-        }`}
-      />
+        )}
+      </span>
       <span
         className={`relative z-[1] text-xs font-medium ${
-          processing ? "text-emerald-900" : error ? "text-red-800" : "text-gray-700"
+          isProcessing
+            ? "text-amber-900"
+            : isFailed
+              ? "text-red-800"
+              : isDone
+                ? "text-emerald-900"
+                : "text-gray-700"
         }`}
       >
         {label}

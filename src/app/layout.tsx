@@ -6,8 +6,8 @@ import { TRPCReactProvider } from "~/trpc/react";
 import { SessionProvider } from "~/components/session-provider";
 
 export const metadata: Metadata = {
-  title: "Alter Ego — Chat Widget Platform",
-  description: "Embeddable AI chat widget powered by your content",
+  title: "ALT EGO",
+  description: "Give your website an Ego Layer",
   icons: [{ rel: "icon", url: "/favicon.ico" }],
 };
 

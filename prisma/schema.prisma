@@ -56,9 +56,16 @@ model User {
   image         String?
   orgId         String?
   org           Organization? @relation(fields: [orgId], references: [id])
+  plan          UserPlan      @default(FREE)
   accounts      Account[]
   sessions      Session[]
   createdAt     DateTime      @default(now())
+}
+
+enum UserPlan {
+  FREE
+  PRO
+  MAX
 }
 
 model Organization {
@@ -99,7 +106,7 @@ model Site {
   livePineconePrefix String?
   // Saved scrape settings for the knowledge base pipeline (shown in admin UI).
   scrapeConfig   Json?
-  isActive       Boolean      @default(true)
+  isActive       Boolean      @default(false)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   chatSessions   ChatSession[]

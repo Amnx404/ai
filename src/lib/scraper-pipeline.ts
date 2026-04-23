@@ -64,6 +64,46 @@ export type ApiStatus = {
   logs?: Record<string, string>;
 };
 
+export type PipelineRunRequest = {
+  scrape: ScrapeRequest;
+  prepare: PrepareRequest;
+  upload: UploadRequest;
+  callback_url?: string | null;
+};
+
+export type PipelineEnqueueResponse = {
+  ok: boolean;
+  run_id: string;
+  procrastinate_job_id: number;
+  message?: string | null;
+};
+
+export type RunStatusResponse = {
+  ok: true;
+  run_id: string;
+  state_path: string;
+  state?: Record<string, unknown> | null;
+  pipeline?: Record<string, unknown> | null;
+  current_step?: string | null;
+  pipeline_status?: string | null;
+  step_responses?: {
+    scrape?: ApiStatus | null;
+    prepare?: ApiStatus | null;
+    upload?: ApiStatus | null;
+  } | null;
+  scrape?: Record<string, unknown> | null;
+  prepare?: Record<string, unknown> | null;
+  upload?: Record<string, unknown> | null;
+  paths?: Record<string, unknown> | null;
+};
+
+export type StopPipelineResponse = {
+  ok: true;
+  run_id: string;
+  cancel_file: string;
+  procrastinate_job_id?: number | null;
+};
+
 function baseUrl() {
   const raw = env.SCRAPER_PIPELINE_BASE_URL?.trim();
   if (!raw) {
@@ -106,8 +146,19 @@ export async function scraperUpload(req: UploadRequest): Promise<ApiStatus> {
   return postJson<UploadRequest, ApiStatus>("/upload", req);
 }
 
-export async function scraperRunStatus(runId: string): Promise<ApiStatus> {
-  return getJson<ApiStatus>(`/runs/${encodeURIComponent(runId)}`);
+export async function scraperEnqueueRun(req: PipelineRunRequest): Promise<PipelineEnqueueResponse> {
+  return postJson<PipelineRunRequest, PipelineEnqueueResponse>("/runs", req);
+}
+
+export async function scraperRunStatus(runId: string): Promise<RunStatusResponse> {
+  return getJson<RunStatusResponse>(`/runs/${encodeURIComponent(runId)}`);
+}
+
+export async function scraperStopRun(runId: string): Promise<StopPipelineResponse> {
+  return postJson<Record<string, never>, StopPipelineResponse>(
+    `/runs/${encodeURIComponent(runId)}/stop`,
+    {},
+  );
 }
 
 export async function waitForRunFinished(runId: string, opts?: { timeoutMs?: number }) {
@@ -115,7 +166,9 @@ export async function waitForRunFinished(runId: string, opts?: { timeoutMs?: num
   const start = Date.now();
   while (true) {
     const status = await scraperRunStatus(runId);
-    if (status.finished_at) return status;
+    if (status.pipeline_status === "succeeded" || status.pipeline_status === "failed" || status.pipeline_status === "aborted") {
+      return status;
+    }
     if (Date.now() - start > timeoutMs) {
       throw new Error(`Scraper pipeline run timed out after ${timeoutMs}ms (run_id=${runId})`);
     }

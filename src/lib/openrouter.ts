@@ -7,7 +7,7 @@ export function getOpenRouterClient() {
     apiKey: env.OPENROUTER_API_KEY,
     defaultHeaders: {
       "HTTP-Referer": env.NEXTAUTH_URL,
-      "X-Title": "Alter Ego",
+      "X-Title": "ALT EGO",
     },
   });
 }

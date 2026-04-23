@@ -1,22 +1,12 @@
 import Link from "next/link";
-import { Barlow_Condensed, IBM_Plex_Mono, Barlow } from "next/font/google";
-
-const barlowCondensed = Barlow_Condensed({
-  subsets: ["latin"],
-  weight: ["700", "900"],
-  variable: "--font-barlow-condensed",
-});
+import { IBM_Plex_Mono } from "next/font/google";
+import { GeistSans } from "geist/font/sans";
+import { RotatingWords } from "./_components/rotating-words";
 
 const ibmPlexMono = IBM_Plex_Mono({
   subsets: ["latin"],
   weight: ["400", "700"],
   variable: "--font-ibm-plex-mono",
-});
-
-const barlow = Barlow({
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  variable: "--font-barlow",
 });
 
 // ── Logo ──────────────────────────────────────────────────────────────────────
@@ -47,12 +37,12 @@ const Logo = ({ size = "md" }: { size?: "sm" | "md" }) => {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function HomePage() {
-  const fonts = `${barlowCondensed.variable} ${ibmPlexMono.variable} ${barlow.variable}`;
+  const fonts = `${GeistSans.variable} ${ibmPlexMono.variable}`;
 
   return (
     <main
       className={`${fonts} min-h-screen bg-black antialiased selection:bg-blue-600/25 selection:text-blue-400`}
-      style={{ fontFamily: "var(--font-barlow), sans-serif", color: "#999" }}
+      style={{ fontFamily: "var(--font-geist-sans), system-ui, sans-serif", color: "#B8B8B8" }}
     >
       {/* ── Nav ── */}
       <nav
@@ -70,7 +60,7 @@ export default function HomePage() {
               letterSpacing: "0.35em",
             }}
           >
-            Alt Ego Labs
+            ALT EGO LABS
           </span>
         </div>
         <Link
@@ -78,10 +68,10 @@ export default function HomePage() {
           className="uppercase transition-colors hover:text-white"
           style={{
             fontFamily: "var(--font-ibm-plex-mono), monospace",
-            fontSize: 10,
+            fontSize: 13,
             fontWeight: 700,
             letterSpacing: "0.25em",
-            color: "#666",
+            color: "#FFFFFF",
           }}
         >
           Sign In
@@ -89,41 +79,36 @@ export default function HomePage() {
       </nav>
 
       {/* ── Hero ── */}
-      <section className="mx-auto max-w-6xl px-8 pb-32 pt-20">
-        <p
-          className="mb-7 uppercase"
-          style={{
-            fontFamily: "var(--font-barlow-condensed), sans-serif",
-            fontSize: 13,
-            fontWeight: 700,
-            letterSpacing: "0.5em",
-            color: "#3A7BFF",
-            animation: "ae-slide .6s .2s both",
-          }}
-        >
-          The AI Already Has a Take on Your Brand
-        </p>
-
+      <section className="mx-auto max-w-6xl px-8 pb-24 pt-16">
         <h1
           className="max-w-4xl text-white"
           style={{
-            fontFamily: "var(--font-barlow-condensed), sans-serif",
-            fontSize: "clamp(52px, 8vw, 96px)",
-            fontWeight: 900,
-            lineHeight: 0.95,
-            letterSpacing: "-0.5px",
+            fontFamily: "var(--font-geist-sans), system-ui, sans-serif",
+            fontSize: "clamp(40px, 6.4vw, 76px)",
+            fontWeight: 800,
+            lineHeight: 0.98,
+            letterSpacing: "-0.8px",
             animation: "ae-slide .7s .3s both",
           }}
         >
-          Personal apps
+          <span style={{ color: "#fff" }}>GIVE</span>{" "}
+          <span style={{ color: "#666" }}>your</span>{" "}
+          <span style={{ color: "#fff" }}>
+            <RotatingWords
+              words={["portfolio", "shop", "website", "product", "company"]}
+              className="text-white"
+            />
+          </span>{" "}
+          <span style={{ color: "#666" }}>an</span>{" "}
+          <span style={{ color: "#3A7BFF" }}>EGO</span>.
           <br />
-          have memory.
-          <br />
-          <span style={{ color: "#3A7BFF" }}>
-            Brands need
-            <br />
-            an Ego.
-          </span>
+          <span style={{ color: "#AFAFAF" }}>
+            A layer of answers
+          </span>{" "}
+          <span style={{ color: "#fff" }}>
+            that speaks with its own personality.
+          </span>{" "}
+          
         </h1>
 
         <p
@@ -131,13 +116,12 @@ export default function HomePage() {
           style={{
             fontSize: 17,
             lineHeight: 1.75,
-            color: "#888",
+            color: "#C6C6C6",
             animation: "ae-slide .7s .45s both",
           }}
         >
-          In an era where LLMs synthesize your reputation on the fly,
-          &ldquo;visibility&rdquo; is no longer enough. Alter Ego Labs anchors a
-          definitive brand identity across the AI landscape.
+          Give your visitors a place to ask questions and get confident answers, grounded in your own
+          pages with sources they can click.
         </p>
 
         <div
@@ -157,20 +141,7 @@ export default function HomePage() {
               borderRadius: 2,
             }}
           >
-            Start Building →
-          </Link>
-          <Link
-            href="/docs"
-            className="uppercase transition-colors hover:text-white"
-            style={{
-              fontFamily: "var(--font-ibm-plex-mono), monospace",
-              fontSize: 10,
-              fontWeight: 700,
-              letterSpacing: "0.2em",
-              color: "#555",
-            }}
-          >
-            View Docs
+            Get started →
           </Link>
         </div>
       </section>
@@ -182,14 +153,14 @@ export default function HomePage() {
       >
         {[
           {
-            num: "01 — Internal",
-            title: "Brand Voice\nAgent",
-            body: "The source-of-truth for your domain. A drop-in AI presence that speaks with your specific narrative, citing only your verified content — zero drift, zero hallucination.",
+            num: "01 — Knowledge",
+            title: "Make your site\nremember",
+            body: "Turn your pages into a living knowledge base. When you update your site, your Ego updates too — so answers stay grounded in what you actually publish.",
           },
           {
-            num: "02 — External",
-            title: "Reputation\nAudit",
-            body: "Audit how the world's leading models perceive your brand. Identify where your ego is being diluted and how the machine-world ranks your products against competitors.",
+            num: "02 — Answers",
+            title: "Cited responses\nfrom your pages",
+            body: "Your Ego Layer answers customer questions using your content and shows sources inline, so users can verify every claim and jump to the original page.",
           },
         ].map((f, i) => (
           <div
@@ -210,9 +181,9 @@ export default function HomePage() {
               className="mb-7 uppercase"
               style={{
                 fontFamily: "var(--font-ibm-plex-mono), monospace",
-                fontSize: 10,
+                fontSize: 13,
                 fontWeight: 700,
-                letterSpacing: "0.35em",
+                letterSpacing: "0.3em",
                 color: "#3A7BFF",
               }}
             >
@@ -221,18 +192,16 @@ export default function HomePage() {
             <h2
               className="mb-5 whitespace-pre-line text-white"
               style={{
-                fontFamily: "var(--font-barlow-condensed), sans-serif",
+                fontFamily: "var(--font-geist-sans), system-ui, sans-serif",
                 fontSize: 40,
-                fontWeight: 900,
-                lineHeight: 1,
-                letterSpacing: "0.02em",
+                fontWeight: 800,
+                lineHeight: 1.05,
+                letterSpacing: "-0.4px",
               }}
             >
               {f.title}
             </h2>
-            <p
-              style={{ fontSize: 16, lineHeight: 1.8, color: "#777", maxWidth: 400 }}
-            >
+            <p style={{ fontSize: 16, lineHeight: 1.8, color: "#BEBEBE", maxWidth: 420 }}>
               {f.body}
             </p>
           </div>
@@ -249,20 +218,20 @@ export default function HomePage() {
             className="mb-8 uppercase"
             style={{
               fontFamily: "var(--font-ibm-plex-mono), monospace",
-              fontSize: 10,
+              fontSize: 13,
               fontWeight: 700,
-              letterSpacing: "0.35em",
-              color: "#555",
+              letterSpacing: "0.3em",
+              color: "#3A7BFF",
             }}
           >
-            The Core Philosophy
+            Why it matters
           </p>
           <blockquote
             style={{
-              fontFamily: "var(--font-barlow-condensed), sans-serif",
-              fontSize: "clamp(32px, 4vw, 52px)",
+              fontFamily: "var(--font-geist-sans), system-ui, sans-serif",
+              fontSize: "clamp(28px, 3.6vw, 44px)",
               fontWeight: 700,
-              color: "#555",
+              color: "#AFAFAF",
               lineHeight: 1.1,
               maxWidth: 900,
             }}
@@ -280,41 +249,64 @@ export default function HomePage() {
 
       {/* ── Footer ── */}
       <footer
-        className="mx-auto flex max-w-6xl items-center justify-between px-8 py-10"
+        className="mx-auto max-w-6xl px-8 py-12"
         style={{ borderTop: "1px solid #111" }}
       >
-        <div className="flex items-center gap-3">
-          <Logo size="sm" />
-          <span
-            className="uppercase"
-            style={{
-              fontFamily: "var(--font-ibm-plex-mono), monospace",
-              fontSize: 9,
-              fontWeight: 700,
-              letterSpacing: "0.2em",
-              color: "#444",
-            }}
-          >
-            © 2026 Alt Ego Labs
-          </span>
-        </div>
-        <div className="flex gap-8">
-          {["Twitter", "Privacy", "Documentation"].map((l) => (
+        <div className="flex flex-col gap-8 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex items-start gap-3">
+            <Logo size="sm" />
+            <div>
+              <p
+                className="uppercase text-white"
+                style={{
+                  fontFamily: "var(--font-ibm-plex-mono), monospace",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: "0.28em",
+                }}
+              >
+                © 2026 ALT EGO LABS
+              </p>
+              <p className="mt-2 max-w-sm text-sm" style={{ color: "#BEBEBE" }}>
+                A quiet layer of answers, trained on what you publish. Made with love in SF.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-x-10 gap-y-3 sm:grid-cols-1 sm:text-right">
+            {[
+              { label: "Pricing", href: "/subscription" },
+              { label: "Feedback", href: "/contact" },
+            ].map((l) => (
+              <Link
+                key={l.href}
+                href={l.href}
+                className="uppercase transition-colors hover:text-white"
+                style={{
+                  fontFamily: "var(--font-ibm-plex-mono), monospace",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: "0.22em",
+                  color: "#A3A3A3",
+                }}
+              >
+                {l.label}
+              </Link>
+            ))}
             <a
-              key={l}
-              href="#"
-              className="uppercase transition-colors hover:text-white"
+              href="mailto:hello@altegolabs.com"
+              className="col-span-2 uppercase transition-colors hover:text-white sm:col-span-1"
               style={{
                 fontFamily: "var(--font-ibm-plex-mono), monospace",
-                fontSize: 9,
+                fontSize: 11,
                 fontWeight: 700,
-                letterSpacing: "0.2em",
-                color: "#444",
+                letterSpacing: "0.22em",
+                color: "#A3A3A3",
               }}
             >
-              {l}
+              hello@altegolabs.com
             </a>
-          ))}
+          </div>
         </div>
       </footer>
 

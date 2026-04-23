@@ -16,6 +16,7 @@ declare module "next-auth" {
     user: {
       id: string;
       orgId: string | null;
+      plan: "FREE" | "PRO" | "MAX";
     } & DefaultSession["user"];
   }
 }
@@ -24,6 +25,7 @@ declare module "next-auth/jwt" {
   interface JWT {
     id?: string;
     orgId?: string | null;
+    plan?: "FREE" | "PRO" | "MAX";
   }
 }
 
@@ -34,7 +36,7 @@ function getResendClient() {
 }
 
 const magicLinkFrom =
-  env.RESEND_FROM ?? "Alter Ego <noreply@roboracer.ai>";
+  env.RESEND_FROM ?? "Alt Ego Team <onboarding@altegolabs.com>";
 
 export const authOptions: NextAuthOptions = {
   // Database sessions are opaque tokens; `next-auth/middleware` uses `getToken()` which
@@ -42,12 +44,28 @@ export const authOptions: NextAuthOptions = {
   // keeps the Prisma adapter for users/verification tokens while exposing a JWT cookie.
   session: { strategy: "jwt" },
   callbacks: {
-    jwt: ({ token, user }) => {
+    jwt: async ({ token, user }) => {
       if (user) {
-        const u = user as { id: string; orgId?: string | null };
+        const u = user as { id: string; orgId?: string | null; plan?: "FREE" | "PRO" | "MAX" };
         token.id = u.id;
         token.sub = u.id;
         token.orgId = u.orgId ?? null;
+        token.plan = u.plan ?? "FREE";
+      }
+      // Keep plan/orgId in sync with Postgres (so tier changes take effect immediately).
+      if (typeof token.id === "string" || typeof token.sub === "string") {
+        const userId = (typeof token.id === "string" ? token.id : token.sub) as string;
+        try {
+          const dbUser = await db.user.findUnique({
+            where: { id: userId },
+            // Prisma types can be stale across migrations in dev.
+            select: { plan: true, orgId: true } as any,
+          });
+          token.plan = (dbUser?.plan as "FREE" | "PRO" | "MAX" | undefined) ?? "FREE";
+          token.orgId = (dbUser?.orgId as string | null | undefined) ?? token.orgId ?? null;
+        } catch {
+          token.plan = (token.plan ?? "FREE") as "FREE" | "PRO" | "MAX";
+        }
       }
       return token;
     },
@@ -57,6 +75,7 @@ export const authOptions: NextAuthOptions = {
         ...session.user,
         id: (typeof token.id === "string" ? token.id : token.sub) as string,
         orgId: token.orgId ?? null,
+        plan: (token.plan ?? "FREE") as "FREE" | "PRO" | "MAX",
       },
     }),
   },

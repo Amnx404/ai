@@ -92,7 +92,7 @@ export const sitesRouter = createTRPCRouter({
         allowedDomains: z.array(z.string()).optional(),
         allowedTopics: z.array(z.string()).optional(),
         modelId: z.string().optional(),
-        temperature: z.number().min(0).max(2).optional(),
+        temperature: z.number().min(0).max(1).optional(),
         pineconeIndex: z.string().optional().nullable(),
         pineconeNs: z.string().optional().nullable(),
         liveVersion: z.number().int().positive().optional(),
@@ -103,14 +103,53 @@ export const sitesRouter = createTRPCRouter({
     )
     .mutation(async ({ ctx, input }) => {
       const { id, ...data } = input;
-      const user = await ctx.db.user.findUnique({
+      const user = (await ctx.db.user.findUnique({
         where: { id: ctx.session.user.id },
-        select: { orgId: true },
-      });
+        // Prisma types may be temporarily stale in dev until `prisma generate`.
+        select: { orgId: true, plan: true } as any,
+      })) as { orgId: string | null; plan?: "FREE" | "PRO" | "MAX" } | null;
       const site = await ctx.db.site.findFirst({
         where: { id, orgId: user?.orgId ?? "" },
       });
       if (!site) throw new TRPCError({ code: "NOT_FOUND" });
+
+      // Free tier: lock model choice.
+      if (typeof data.modelId === "string") {
+        const plan = (user?.plan as "FREE" | "PRO" | "MAX" | undefined) ?? "FREE";
+        if (plan === "FREE" && data.modelId !== "google/gemini-2.5-flash") {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Upgrade required to use this model.",
+          });
+        }
+      }
+
+      // Enforce active-site limits when enabling a site.
+      if (data.isActive === true && site.isActive === false) {
+        const plan = (user?.plan as "FREE" | "PRO" | "MAX" | undefined) ?? "FREE";
+        const limit = plan === "MAX" ? 10 : plan === "PRO" ? 3 : 1;
+        if (!site.livePineconeNs) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Scrape your knowledge base before deploying.",
+          });
+        }
+        const activeCount = await ctx.db.site.count({
+          where: { orgId: user?.orgId ?? "", isActive: true },
+        });
+        if (activeCount >= limit) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message:
+              plan === "FREE"
+                ? "Free tier can only have 1 active site."
+                : plan === "PRO"
+                  ? "Pro tier can only have 3 active sites."
+                  : "Max tier can only have 10 active sites.",
+          });
+        }
+      }
+
       const { scrapeConfig, ...rest } = data;
       return ctx.db.site.update({
         where: { id },

@@ -87,12 +87,6 @@ export default async function SiteDetailPage({
           </div>
           </div>
           <div className="flex items-center gap-2">
-            <a
-              href={`/widget-demo?siteId=${site.id}&url=${encodeURIComponent(primaryOrigin || "https://example.com/")}`}
-              className="inline-flex items-center justify-center rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-            >
-              Preview widget
-            </a>
             <span
               className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${
                 site.isActive
@@ -177,6 +171,14 @@ export default async function SiteDetailPage({
       )}
 
       {/* Embed snippet */}
+      <div className="mt-6 flex items-center justify-end">
+        <a
+          href={`/widget-demo?siteId=${site.id}&url=${encodeURIComponent(primaryOrigin || "https://example.com/")}`}
+          className="inline-flex items-center justify-center rounded-xl border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+        >
+          Preview widget
+        </a>
+      </div>
       <div className="mt-6" id="embed">
         <EmbedSnippet siteId={site.id} />
       </div>

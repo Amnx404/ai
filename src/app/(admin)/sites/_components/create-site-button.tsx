@@ -9,7 +9,6 @@ export function CreateSiteButton() {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [primaryUrl, setPrimaryUrl] = useState("");
-  const [domains, setDomains] = useState("");
   const router = useRouter();
 
   const createSite = api.sites.create.useMutation({
@@ -17,7 +16,6 @@ export function CreateSiteButton() {
       setOpen(false);
       setName("");
       setPrimaryUrl("");
-      setDomains("");
       router.push(`/sites/${site.id}?setup=1&tab=branding`);
       router.refresh();
     },
@@ -28,6 +26,17 @@ export function CreateSiteButton() {
     if (!s) return "";
     if (/^https?:\/\//i.test(s)) return s;
     return `https://${s}`;
+  };
+
+  const deriveAllowedDomains = (primaryUrlRaw: string) => {
+    const set = new Set<string>();
+    try {
+      const u = new URL(normalizeHttps(primaryUrlRaw));
+      if (u.host) set.add(u.host);
+    } catch {
+      // ignore
+    }
+    return [...set];
   };
 
   return (
@@ -74,19 +83,6 @@ export function CreateSiteButton() {
                   Used for demo preview and favicon-based widget icon.
                 </p>
               </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Allowed domains{" "}
-                  <span className="font-normal text-gray-400">(optional, comma-separated)</span>
-                </label>
-                <input
-                  value={domains}
-                  onChange={(e) => setDomains(e.target.value)}
-                  placeholder="example.com, app.example.com"
-                  className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-                />
-              </div>
             </div>
 
             <div className="mt-6 flex justify-end gap-3">
@@ -102,10 +98,7 @@ export function CreateSiteButton() {
                   createSite.mutate({
                     name: name.trim(),
                     primaryUrl: normalizeHttps(primaryUrl),
-                    allowedDomains: domains
-                      .split(",")
-                      .map((d) => d.trim())
-                      .filter(Boolean),
+                    allowedDomains: deriveAllowedDomains(primaryUrl),
                   });
                 }}
                 disabled={!name.trim() || !primaryUrl.trim() || createSite.isPending}

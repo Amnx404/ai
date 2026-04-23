@@ -144,8 +144,9 @@ export async function POST(req: NextRequest) {
     let finalOutputs: Record<string, unknown> | undefined = undefined;
     try {
       const finalStatus = await scraperRunStatus(status.run_id);
-      if (finalStatus.outputs && typeof finalStatus.outputs === "object") {
-        finalOutputs = finalStatus.outputs as Record<string, unknown>;
+      const uploadOutputs = finalStatus.step_responses?.upload?.outputs;
+      if (uploadOutputs && typeof uploadOutputs === "object") {
+        finalOutputs = uploadOutputs as Record<string, unknown>;
       }
     } catch {
       // ignore

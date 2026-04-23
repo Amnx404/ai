@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "~/trpc/react";
+import { Switch } from "~/components/ui/switch";
+import { Button } from "~/components/ui/button";
 
 export function SiteActiveToggle({
   siteId,
@@ -13,6 +15,9 @@ export function SiteActiveToggle({
 }) {
   const router = useRouter();
   const [local, setLocal] = useState(isActive);
+  const [canDeploy, setCanDeploy] = useState(true);
+  const [deployReason, setDeployReason] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
 
   const update = api.sites.update.useMutation({
     onSuccess: () => {
@@ -20,24 +25,63 @@ export function SiteActiveToggle({
     },
   });
 
+  useEffect(() => {
+    setLocal(isActive);
+  }, [isActive]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      setChecking(true);
+      try {
+        const res = await fetch(`/api/v1/sites/deployable?siteId=${encodeURIComponent(siteId)}`);
+        const json = (await res.json().catch(() => null)) as any;
+        if (cancelled) return;
+        if (!res.ok) {
+          setCanDeploy(false);
+          setDeployReason(json?.error ?? "Not deployable");
+          return;
+        }
+        setCanDeploy(Boolean(json?.canDeploy));
+        setDeployReason(typeof json?.reason === "string" ? json.reason : null);
+      } finally {
+        if (!cancelled) setChecking(false);
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [siteId, local]);
+
   return (
-    <button
-      type="button"
-      disabled={update.isPending}
-      onClick={() => {
-        const next = !local;
-        setLocal(next);
-        update.mutate({ id: siteId, isActive: next });
-      }}
-      className={`inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-60 ${
-        local
-          ? "bg-gray-900 text-white hover:bg-gray-800"
-          : "bg-indigo-600 text-white hover:bg-indigo-700"
-      }`}
-      title={local ? "Stop (disable) the site" : "Deploy (enable) the site"}
-    >
-      {local ? "Stop" : "Deploy"}
-    </button>
+    <div className="flex items-center gap-3">
+      {local ? (
+        <>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={update.isPending}
+            onClick={() => update.mutate({ id: siteId, isActive: false })}
+          >
+            Stop
+          </Button>
+        </>
+      ) : (
+        <>
+          <Button
+            type="button"
+            size="sm"
+            disabled={checking || update.isPending || !canDeploy}
+            onClick={() => update.mutate({ id: siteId, isActive: true })}
+            title={!canDeploy ? deployReason ?? undefined : undefined}
+          >
+            {checking ? "Checking…" : "Deploy"}
+          </Button>
+        </>
+      )}
+    </div>
   );
 }
 
