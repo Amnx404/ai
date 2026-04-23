@@ -89,7 +89,6 @@ export function SiteConfigForm({
     allowedTopics: site.allowedTopics.join(", "),
     modelId: site.modelId,
     temperature: site.temperature,
-    liveVersion: site.liveVersion,
     livePineconePrefix:
       (
         site as unknown as {
@@ -239,7 +238,6 @@ export function SiteConfigForm({
       allowedTopics: site.allowedTopics.join(", "),
       modelId: site.modelId,
       temperature: site.temperature,
-      liveVersion: site.liveVersion,
       scrapeSeedUrls: Array.isArray((site.scrapeConfig as any)?.seed_urls)
         ? ((site.scrapeConfig as any).seed_urls as unknown[])
             .filter((v: unknown): v is string => typeof v === "string")
@@ -324,7 +322,6 @@ export function SiteConfigForm({
         .filter(Boolean),
       modelId: form.modelId,
       temperature: form.temperature,
-      liveVersion: form.liveVersion,
       scrapeConfig: {
         seed_urls: form.scrapeSeedUrls
           .split("\n")

@@ -191,7 +191,8 @@ export async function* ragStream(
   | { type: "debug"; stage: string; data: Record<string, unknown> }
   | { type: "error"; message: string }
 > {
-  const { indexName, namespace, indexHostUrl } = resolvePineconeTarget(
+  const liveNamespace = site.livePineconeNs?.trim() ?? "";
+  const { indexName, indexHostUrl } = resolvePineconeTarget(
     site,
     env.PINECONE_INDEX,
     env.PINECONE_INDEX_HOST,
@@ -199,7 +200,12 @@ export async function* ragStream(
   yield {
     type: "debug",
     stage: "pinecone_target",
-    data: { indexName, namespace, indexHostUrl: indexHostUrl ?? null },
+    data: {
+      indexName,
+      namespace: liveNamespace || null,
+      indexHostUrl: indexHostUrl ?? null,
+      namespaceSource: liveNamespace ? "live" : "missing_live",
+    },
   };
 
   // 1. Plan search queries
@@ -226,32 +232,40 @@ export async function* ragStream(
     embeddingDims?: number;
     error: string;
   }> = [];
-  for (const query of queries) {
-    try {
-      const embedding = await embedText(query);
-      const chunks = await queryPinecone({
-        indexName,
-        namespace,
-        indexHostUrl,
-        queryEmbedding: embedding,
-        topK: TOP_K,
-        scoreThreshold: SCORE_THRESHOLD,
-      });
-      allChunks.push(...chunks);
-    } catch (e) {
-      retrievalErrors.push({
-        query,
-        // best-effort: embedText may have failed before returning dims
-        error: e instanceof Error ? e.message : String(e),
-      });
-      yield {
-        type: "debug",
-        stage: "retrieval_error",
-        data: {
+  if (!liveNamespace) {
+    yield {
+      type: "debug",
+      stage: "retrieval_skipped",
+      data: { reason: "missing_live_namespace" },
+    };
+  } else {
+    for (const query of queries) {
+      try {
+        const embedding = await embedText(query);
+        const chunks = await queryPinecone({
+          indexName,
+          namespace: liveNamespace,
+          indexHostUrl,
+          queryEmbedding: embedding,
+          topK: TOP_K,
+          scoreThreshold: SCORE_THRESHOLD,
+        });
+        allChunks.push(...chunks);
+      } catch (e) {
+        retrievalErrors.push({
           query,
+          // best-effort: embedText may have failed before returning dims
           error: e instanceof Error ? e.message : String(e),
-        },
-      };
+        });
+        yield {
+          type: "debug",
+          stage: "retrieval_error",
+          data: {
+            query,
+            error: e instanceof Error ? e.message : String(e),
+          },
+        };
+      }
     }
   }
 

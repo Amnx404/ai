@@ -95,12 +95,9 @@ model Site {
   allowedTopics  String[]
   modelId        String       @default("google/gemini-3-flash-preview")
   temperature    Float        @default(0.9)
-  pineconeIndex  String?
-  pineconeNs     String?
-  liveVersion    Int          @default(1)
   // Points to the latest "live" namespace written by the knowledge base pipeline.
   // When set, retrieval uses this over derived namespaces.
-  livePineconeNs String?
+  livePineconeNs String? @map("live_pinecone_namespace")
   // Editable prefix used when creating new live namespaces via the pipeline.
   // Example: "site-<siteId>-live-v-"
   livePineconePrefix String?
@@ -121,6 +118,8 @@ model KnowledgeBaseRun {
   runId      String
   step       String   // "scrape" | "prepare" | "upload" | "status"
   ok         Boolean  @default(false)
+  // Concrete Pinecone namespace produced by the pipeline.
+  pineconeNamespace String? @map("pinecone_namespace")
   params     Json?
   response   Json?
   outputs    Json?

@@ -159,14 +159,12 @@ export async function POST(req: NextRequest) {
         : undefined);
 
     const liveNs = liveNsFromTopLevel ?? pickLiveNamespace(outputs);
-    const liveVersion = liveNs ? pickLiveVersionFromNamespace(liveNs) : null;
 
     if (liveNs) {
       await db.site.update({
         where: { id: site.id },
         data: {
           livePineconeNs: liveNs,
-          ...(liveVersion ? { liveVersion } : {}),
         },
       });
     }
@@ -178,6 +176,7 @@ export async function POST(req: NextRequest) {
           runId: status.run_id,
           ok: status.ok,
           step,
+          pineconeNamespace: liveNs ?? undefined,
           startedAt: status.started_at ? new Date(status.started_at) : null,
           finishedAt: status.finished_at ? new Date(status.finished_at) : null,
           message: status.message ?? null,
@@ -189,6 +188,7 @@ export async function POST(req: NextRequest) {
         update: {
           ok: status.ok,
           step,
+          pineconeNamespace: liveNs ?? undefined,
           startedAt: status.started_at ? new Date(status.started_at) : undefined,
           finishedAt: status.finished_at ? new Date(status.finished_at) : undefined,
           message: status.message ?? undefined,
@@ -204,7 +204,6 @@ export async function POST(req: NextRequest) {
         livePrefix,
         liveNamespace: liveNs,
         previousLiveNamespace: previousLiveNsFromTopLevel,
-        liveVersion,
       },
       { headers: { "Cache-Control": "no-store" } },
     );

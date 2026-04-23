@@ -9,13 +9,13 @@ export function GettingStarted({
   siteId,
   primaryUrl,
   allowedDomainsCount,
-  livePineconeNs,
+  livePineconeNamespace,
   isActive,
 }: {
   siteId: string;
   primaryUrl: string;
   allowedDomainsCount: number;
-  livePineconeNs: string | null;
+  livePineconeNamespace: string | null;
   isActive: boolean;
 }) {
   const router = useRouter();
@@ -58,7 +58,7 @@ export function GettingStarted({
     {
       id: "knowledge",
       title: "Scrape knowledge base",
-      done: !!livePineconeNs,
+      done: !!livePineconeNamespace,
       href: `/sites/${siteId}?tab=knowledge${setup ? "&setup=1" : ""}`,
     },
     {
@@ -71,7 +71,7 @@ export function GettingStarted({
 
   const completed = steps.filter((s) => s.done).length;
   const next = steps.find((s) => !s.done) ?? steps[steps.length - 1]!;
-  const canDeploy = !!livePineconeNs;
+  const canDeploy = !!livePineconeNamespace;
 
   const update = api.sites.update.useMutation({
     onSuccess: () => router.refresh(),
@@ -160,9 +160,9 @@ export function GettingStarted({
               <span className="text-sm font-semibold text-gray-900">{s.title}</span>
             </div>
 
-            {s.id === "knowledge" && s.done && livePineconeNs ? (
+            {s.id === "knowledge" && s.done && livePineconeNamespace ? (
               <span className="hidden max-w-[240px] truncate font-mono text-xs text-gray-500 sm:block">
-                {livePineconeNs}
+                {livePineconeNamespace}
               </span>
             ) : (
               <span className="text-xs font-semibold text-gray-500">

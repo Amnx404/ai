@@ -19,6 +19,21 @@ function jsonNoStore(data: unknown, status = 200) {
   return NextResponse.json(data, { status, headers: { "Cache-Control": "no-store" } });
 }
 
+function pickLiveNamespaceFromStatus(status: any) {
+  const upload = status?.step_responses?.upload;
+  const candidates = [
+    upload?.live_namespace,
+    upload?.outputs?.live_namespace,
+    upload?.outputs?.liveNamespace,
+    upload?.outputs?.namespace,
+    upload?.outputs?.pinecone_namespace,
+  ];
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim()) return c.trim();
+  }
+  return null;
+}
+
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.user) return jsonNoStore({ error: "Unauthorized" }, 401);
@@ -64,6 +79,9 @@ export async function GET(req: NextRequest) {
     status.pipeline_status === "failed" ||
     status.pipeline_status === "aborted";
 
+  const liveNs =
+    status.pipeline_status === "succeeded" ? pickLiveNamespaceFromStatus(status) : null;
+
   if (done) {
     await (db.knowledgeBaseRun.upsert as unknown as (args: any) => Promise<unknown>)({
       where: { runId_step: { runId: parsed.data.runId, step: "pipeline" } },
@@ -72,12 +90,14 @@ export async function GET(req: NextRequest) {
         runId: parsed.data.runId,
         step: "pipeline",
         ok: status.pipeline_status === "succeeded",
+        pineconeNamespace: liveNs ?? undefined,
         finishedAt: new Date(),
         message: status.pipeline_status ?? null,
         response: (status as unknown) as Prisma.InputJsonValue,
       },
       update: {
         ok: status.pipeline_status === "succeeded",
+        pineconeNamespace: liveNs ?? undefined,
         finishedAt: new Date(),
         message: status.pipeline_status ?? undefined,
         response: (status as unknown) as Prisma.InputJsonValue,
@@ -92,6 +112,7 @@ export async function GET(req: NextRequest) {
       runId: parsed.data.runId,
       ok: done ? status.pipeline_status === "succeeded" : false,
       step: "status",
+      pineconeNamespace: liveNs ?? undefined,
       startedAt: new Date(),
       finishedAt: done ? new Date() : null,
       response: (status as unknown) as Prisma.InputJsonValue,
@@ -99,6 +120,7 @@ export async function GET(req: NextRequest) {
     },
     update: {
       ok: done ? status.pipeline_status === "succeeded" : false,
+      pineconeNamespace: liveNs ?? undefined,
       finishedAt: done ? new Date() : undefined,
       response: (status as unknown) as Prisma.InputJsonValue,
       message: status.pipeline_status ?? undefined,

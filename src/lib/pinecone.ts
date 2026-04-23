@@ -1,7 +1,7 @@
 import { Pinecone, type RecordMetadata } from "@pinecone-database/pinecone";
 import { env } from "~/env.js";
 
-export { getNamespace, resolvePineconeTarget } from "./pinecone-resolve";
+export { resolvePineconeTarget } from "./pinecone-resolve";
 
 let _pinecone: Pinecone | null = null;
 

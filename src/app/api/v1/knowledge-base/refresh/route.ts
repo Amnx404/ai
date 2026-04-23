@@ -258,16 +258,33 @@ export async function POST(req: NextRequest) {
     (typeof uploaded.live_namespace === "string" && uploaded.live_namespace.trim()
       ? uploaded.live_namespace.trim()
       : null) ?? pickLiveNamespace(outputs ?? undefined);
-  const liveVersion = liveNs ? pickLiveVersionFromNamespace(liveNs) : null;
 
   if (liveNs) {
     await db.site.update({
       where: { id: siteId },
       data: {
         livePineconeNs: liveNs,
-        ...(liveVersion ? { liveVersion } : {}),
       },
     });
+  }
+
+  // Store canonical live namespace on the "upload" run row (if we have it).
+  if (liveNs) {
+    await (db.knowledgeBaseRun.upsert as unknown as (args: any) => Promise<unknown>)({
+      where: { runId_step: { runId: uploaded.run_id, step: "upload" } },
+      create: {
+        siteId,
+        runId: uploaded.run_id,
+        step: "upload",
+        ok: true,
+        pineconeNamespace: liveNs,
+        finishedAt: new Date(),
+        message: "refresh",
+      },
+      update: {
+        pineconeNamespace: liveNs,
+      },
+    }).catch(() => null);
   }
 
   const refreshedSite = await db.site.findUnique({ where: { id: siteId } });
@@ -284,7 +301,6 @@ export async function POST(req: NextRequest) {
     runId: scraped.run_id,
     final: finalStatus ?? uploaded,
     liveNamespace: liveNs,
-    liveVersion,
     effectivePineconeTarget: effectiveTarget,
   });
 }

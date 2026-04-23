@@ -84,22 +84,31 @@ export async function POST(req: NextRequest) {
     status.pipeline_status === "failed" ||
     status.pipeline_status === "aborted";
 
-  if (done) {
+  // Only a successful run with a concrete live namespace should become canonical.
+  const succeeded = status.pipeline_status === "succeeded";
+  const liveNs = succeeded ? pickLiveNamespaceFromRun(status) : null;
+  // liveVersion is no longer stored on Site; live namespace is the single source of truth.
+
+  // Update the KB run table only when we have a definitive pinecone namespace on success.
+  // (This prevents "successful-but-missing-namespace" runs from overwriting canonical state.)
+  if (done && succeeded && liveNs) {
     await (db.knowledgeBaseRun.upsert as unknown as (args: any) => Promise<unknown>)({
       where: { runId_step: { runId: effectiveRunId, step: "pipeline" } },
       create: {
         siteId: parsed.data.siteId,
         runId: effectiveRunId,
         step: "pipeline",
-        ok: status.pipeline_status === "succeeded",
+        ok: true,
+        pineconeNamespace: liveNs,
         finishedAt: new Date(),
-        message: status.pipeline_status ?? null,
+        message: `succeeded:${liveNs}`,
         response: (status as unknown) as Prisma.InputJsonValue,
       },
       update: {
-        ok: status.pipeline_status === "succeeded",
+        ok: true,
+        pineconeNamespace: liveNs,
         finishedAt: new Date(),
-        message: status.pipeline_status ?? undefined,
+        message: `succeeded:${liveNs}`,
         response: (status as unknown) as Prisma.InputJsonValue,
       },
     }).catch(() => null);
@@ -111,38 +120,30 @@ export async function POST(req: NextRequest) {
       siteId: parsed.data.siteId,
       runId: effectiveRunId,
       step: "status",
-      ok: done ? status.pipeline_status === "succeeded" : false,
+      ok: done && succeeded && Boolean(liveNs),
+      pineconeNamespace: liveNs ?? undefined,
       startedAt: new Date(),
       finishedAt: done ? new Date() : null,
       response: (status as unknown) as Prisma.InputJsonValue,
       message: status.pipeline_status ?? null,
     },
     update: {
-      ok: done ? status.pipeline_status === "succeeded" : false,
+      ok: done && succeeded && Boolean(liveNs),
+      pineconeNamespace: liveNs ?? undefined,
       finishedAt: done ? new Date() : undefined,
       response: (status as unknown) as Prisma.InputJsonValue,
       message: status.pipeline_status ?? undefined,
     },
   }).catch(() => null);
 
-  if (status.pipeline_status === "succeeded") {
-    const liveNs = pickLiveNamespaceFromRun(status);
-    if (liveNs) {
-      const liveVersion = (() => {
-        const m = liveNs.match(/live-v-?(\d+)\b/i);
-        if (!m) return null;
-        const n = Number(m[1]);
-        return Number.isFinite(n) ? n : null;
-      })();
-
-      await db.site.update({
-        where: { id: parsed.data.siteId },
-        data: {
-          livePineconeNs: liveNs,
-          liveVersion: liveVersion ?? undefined,
-        },
-      }).catch(() => null);
-    }
+  // Cascade: on definitive success, set the site to the latest live namespace.
+  if (done && succeeded && liveNs) {
+    await db.site.update({
+      where: { id: parsed.data.siteId },
+      data: {
+        livePineconeNs: liveNs,
+      },
+    }).catch(() => null);
   }
 
   return NextResponse.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });

@@ -261,7 +261,10 @@ export function SiteConfigKnowledgeTab({
     }
   }
 
-  const tabDone = useMemo(() => Boolean(siteLivePineconeNs), [siteLivePineconeNs]);
+  const hasLiveNamespace = useMemo(
+    () => Boolean(siteLivePineconeNs && siteLivePineconeNs.trim()),
+    [siteLivePineconeNs],
+  );
 
   return (
     <>
@@ -273,13 +276,15 @@ export function SiteConfigKnowledgeTab({
               ? { tone: "muted", label: "Starting…" }
               : isKbPolling
                 ? { tone: "live", label: "Scraping in progress" }
-                : kbStep === "done"
-                  ? { tone: "ok", label: "Up to date" }
-                  : kbStep === "error"
-                    ? { tone: "error", label: "Needs attention" }
-                    : kbRunId
-                      ? { tone: "muted", label: "Last run loaded" }
-                      : { tone: "muted", label: "Not scraped yet" };
+                : !hasLiveNamespace
+                  ? { tone: "error", label: "Needs scraping / indexing" }
+                  : kbStep === "done"
+                    ? { tone: "ok", label: "Up to date" }
+                    : kbStep === "error"
+                      ? { tone: "error", label: "Needs attention" }
+                      : kbRunId
+                        ? { tone: "muted", label: "Last run loaded" }
+                        : { tone: "muted", label: "Not scraped yet" };
 
           const statusCls =
             status.tone === "live"
@@ -327,16 +332,7 @@ export function SiteConfigKnowledgeTab({
                       )}
                       <span>{status.label}</span>
                     </div>
-                    <span
-                      className={`rounded-full border px-3 py-1 text-xs font-semibold ${
-                        tabDone
-                          ? "border-green-200 bg-green-50 text-green-800"
-                          : "border-amber-200 bg-amber-50 text-amber-800"
-                      }`}
-                      title={tabDone ? "Index exists" : "No index yet"}
-                    >
-                      {tabDone ? "Indexed" : "Not indexed"}
-                    </span>
+                    {/* "Indexed" badge intentionally removed — completion is represented by live namespace on the site. */}
                   </div>
                   <p className="mt-1 text-sm text-gray-600">
                     We’ll crawl your site and keep answers grounded in your pages.
