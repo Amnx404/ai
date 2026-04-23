@@ -6,7 +6,7 @@ import { TRPCReactProvider } from "~/trpc/react";
 import { SessionProvider } from "~/components/session-provider";
 
 export const metadata: Metadata = {
-  title: "ALT EGO",
+  title: "ALT EGO LABS",
   description: "Give your website an Ego Layer",
   icons: [{ rel: "icon", url: "/favicon.ico" }],
 };

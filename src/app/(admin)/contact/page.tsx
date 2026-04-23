@@ -1,6 +1,6 @@
 export default function ContactPage() {
   const email = "hello@altegolabs.com";
-  const subject = "ALT EGO — Feedback / feature request";
+  const subject = "ALT EGO LABS — Feedback / feature request";
   const body =
     "Hi ALT EGO team,\n\nHere’s my feedback / feature request:\n\n- What I was trying to do:\n- What happened:\n- What I expected:\n- Feature request (if any):\n- Site ID (if relevant):\n\nThanks!";
 

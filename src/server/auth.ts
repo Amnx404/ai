@@ -87,7 +87,7 @@ export const authOptions: NextAuthOptions = {
         const resend = getResendClient();
         const html = `
             <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
-              <h2>Sign in to Alter Ego</h2>
+              <h2>Sign in to Alt Ego Labs</h2>
               <p>Click the button below to sign in. This link expires in 24 hours.</p>
               <a href="${url}" style="display:inline-block;padding:12px 24px;background:#6366f1;color:#fff;border-radius:8px;text-decoration:none;font-weight:600">
                 Sign in
@@ -102,7 +102,7 @@ export const authOptions: NextAuthOptions = {
           const { error } = await resend.emails.send({
             from: magicLinkFrom,
             to: identifier,
-            subject: "Sign in to Alter Ego",
+            subject: "Sign in to Alt Ego Labs",
             html,
           });
           if (error) {

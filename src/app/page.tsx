@@ -2,38 +2,13 @@ import Link from "next/link";
 import { IBM_Plex_Mono } from "next/font/google";
 import { GeistSans } from "geist/font/sans";
 import { RotatingWords } from "./_components/rotating-words";
+import { BrandLogo } from "~/components/brand-logo";
 
 const ibmPlexMono = IBM_Plex_Mono({
   subsets: ["latin"],
   weight: ["400", "700"],
   variable: "--font-ibm-plex-mono",
 });
-
-// ── Logo ──────────────────────────────────────────────────────────────────────
-const Logo = ({ size = "md" }: { size?: "sm" | "md" }) => {
-  const w = size === "sm" ? 28 : 52;
-  const h = size === "sm" ? 18 : 34;
-  return (
-    <svg
-      viewBox="0 0 48 32"
-      fill="none"
-      style={{ width: w, height: h, display: "block" }}
-    >
-      {/* Outline bar — same width as solid so visual weight matches */}
-      <rect
-        x="0"
-        y="0"
-        width="15"
-        height="32"
-        fill="none"
-        stroke="#0057FF"
-        strokeWidth="2"
-      />
-      {/* Solid bar */}
-      <rect x="22" y="0" width="15" height="32" fill="#0057FF" />
-    </svg>
-  );
-};
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function HomePage() {
@@ -50,7 +25,7 @@ export default function HomePage() {
         style={{ animation: "ae-fade .6s .1s both" }}
       >
         <div className="flex items-center gap-3">
-          <Logo size="md" />
+          <BrandLogo size="md" className="block" />
           <span
             className="uppercase text-white"
             style={{
@@ -92,23 +67,20 @@ export default function HomePage() {
           }}
         >
           <span style={{ color: "#fff" }}>GIVE</span>{" "}
-          <span style={{ color: "#666" }}>your</span>{" "}
+          <span style={{ color: "#666" }}>your</span>
+          <br />
           <span style={{ color: "#fff" }}>
             <RotatingWords
               words={["portfolio", "shop", "website", "product", "company"]}
               className="text-white"
             />
-          </span>{" "}
+          </span>
+          <br />
           <span style={{ color: "#666" }}>an</span>{" "}
           <span style={{ color: "#3A7BFF" }}>EGO</span>.
           <br />
-          <span style={{ color: "#AFAFAF" }}>
-            A layer of answers
-          </span>{" "}
-          <span style={{ color: "#fff" }}>
-            that speaks with its own personality.
-          </span>{" "}
-          
+          <span style={{ color: "#AFAFAF" }}>A layer of answers</span>{" "}
+          <span style={{ color: "#fff" }}>that speaks with its own personality.</span>
         </h1>
 
         <p
@@ -254,7 +226,7 @@ export default function HomePage() {
       >
         <div className="flex flex-col gap-8 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-start gap-3">
-            <Logo size="sm" />
+            <BrandLogo size="sm" className="block" />
             <div>
               <p
                 className="uppercase text-white"
@@ -268,7 +240,7 @@ export default function HomePage() {
                 © 2026 ALT EGO LABS
               </p>
               <p className="mt-2 max-w-sm text-sm" style={{ color: "#BEBEBE" }}>
-                A quiet layer of answers, trained on what you publish. Made with love in SF.
+                A quiet layer of answers, trained on what you publish. Made with love in SF ❤️.
               </p>
             </div>
           </div>

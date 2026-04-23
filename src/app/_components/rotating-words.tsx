@@ -23,19 +23,20 @@ export function RotatingWords({
   }, [intervalMs, safeWords.length]);
 
   const word = safeWords[idx] ?? "";
+  const ariaLabel = safeWords.join(", ");
 
   return (
-    <span className={className}>
-      <span className="sr-only">{safeWords.join(", ")}</span>
+    <span className={className} aria-label={ariaLabel}>
       <span
         aria-hidden="true"
-        className="inline-flex min-w-[10ch] items-baseline justify-start"
+        className="inline-flex items-baseline justify-start whitespace-nowrap align-baseline"
         key={word}
       >
         <span
           className="ae-rotateWord"
           style={{
             display: "inline-block",
+            minWidth: "10ch",
             willChange: "transform, opacity, filter",
             filter: "drop-shadow(0 0 18px rgba(58,123,255,0.22))",
           }}

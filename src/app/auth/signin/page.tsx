@@ -2,6 +2,7 @@
 
 import { signIn } from "next-auth/react";
 import { useState } from "react";
+import { BrandLogo } from "~/components/brand-logo";
 
 export default function SignInPage() {
   const [email, setEmail] = useState("");
@@ -33,12 +34,10 @@ export default function SignInPage() {
     <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-600 text-white">
-            <svg viewBox="0 0 24 24" className="h-6 w-6 fill-current">
-              <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z" />
-            </svg>
+          <div className="mx-auto mb-4 flex justify-center">
+            <BrandLogo size="md" />
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">Sign in to Alter Ego</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Sign in to Alt Ego</h1>
           <p className="mt-1 text-sm text-gray-500">
             We&apos;ll send a magic link to your email
           </p>

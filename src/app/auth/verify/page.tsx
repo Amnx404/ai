@@ -1,11 +1,11 @@
+import { BrandLogo } from "~/components/brand-logo";
+
 export default function VerifyPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
       <div className="w-full max-w-sm text-center">
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-green-100">
-          <svg viewBox="0 0 24 24" className="h-6 w-6 fill-green-600">
-            <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z" />
-          </svg>
+        <div className="mx-auto mb-4 flex justify-center">
+          <BrandLogo size="md" />
         </div>
         <h1 className="text-2xl font-bold text-gray-900">Check your email</h1>
         <p className="mt-2 text-sm text-gray-600">

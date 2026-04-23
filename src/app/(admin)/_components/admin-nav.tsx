@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
+import { BrandLogo } from "~/components/brand-logo";
 
 const navItems = [
   {
@@ -45,23 +46,7 @@ export function AdminNav({
     <aside className="sticky top-0 flex h-screen w-64 flex-col border-r border-gray-200 bg-white">
       {/* Brand */}
       <div className="flex items-center gap-3 border-b border-gray-200 px-5 py-4">
-        <svg
-          viewBox="0 0 48 32"
-          className="block"
-          style={{ width: 26, height: 18 }}
-          aria-hidden="true"
-        >
-            <rect
-              x="0"
-              y="0"
-              width="15"
-              height="32"
-              fill="none"
-              stroke="#0057FF"
-              strokeWidth="2"
-            />
-            <rect x="22" y="0" width="15" height="32" fill="#0057FF" />
-        </svg>
+        <BrandLogo size="sm" className="block" />
         <div className="min-w-0">
           <p
             className="truncate uppercase text-gray-900"
@@ -71,7 +56,7 @@ export function AdminNav({
               letterSpacing: "0.28em",
             }}
           >
-            ALTER EGO LABS
+            ALT EGO LABS
           </p>
           <p className="truncate text-[11px] font-medium text-gray-500">Admin console</p>
         </div>
