@@ -16,6 +16,7 @@ import { Label } from "~/components/ui/label";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Separator } from "~/components/ui/separator";
 import { cn } from "~/lib/utils";
+import { LinkifiedText } from "~/components/chat/linkified-text";
 
 function formatSessionDate(d: Date) {
   return new Intl.DateTimeFormat(undefined, {
@@ -159,7 +160,11 @@ export function SiteMonitorView({
                             >
                               {msg.role === "user" ? "User" : "Assistant"}
                             </span>
-                            <p className="mt-1 whitespace-pre-wrap text-gray-800">{msg.content}</p>
+                            <LinkifiedText
+                              content={msg.content}
+                              sources={msg.sources}
+                              className="mt-1 whitespace-pre-wrap text-gray-800"
+                            />
                           </div>
                         </li>
                       ))}

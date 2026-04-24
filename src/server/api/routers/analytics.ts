@@ -120,6 +120,7 @@ export const analyticsRouter = createTRPCRouter({
           id: m.id,
           role: m.role as "user" | "assistant",
           content: m.content,
+          sources: m.sources as Array<{ title: string; url: string; score: number }> | undefined,
           createdAt: m.createdAt,
         })),
       };

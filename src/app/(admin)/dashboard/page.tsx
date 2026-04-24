@@ -3,6 +3,9 @@ import Link from "next/link";
 
 import { authOptions } from "~/server/auth";
 import { db } from "~/server/db";
+import { Card, CardContent } from "~/components/ui/card";
+import { Button } from "~/components/ui/button";
+import { CreateSiteButton } from "../sites/_components/create-site-button";
 
 export default async function DashboardPage() {
   const session = await getServerSession(authOptions);
@@ -33,30 +36,32 @@ export default async function DashboardPage() {
 
   return (
     <div>
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Welcome back, {session?.user.email}
-        </p>
+      <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Welcome back, {session?.user.email}
+          </p>
+        </div>
+        <CreateSiteButton />
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         {stats.map((s) => (
-          <div
-            key={s.label}
-            className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm"
-          >
-            <p className="text-sm font-medium text-gray-500">{s.label}</p>
-            <p className="mt-2 text-3xl font-bold text-gray-900">{s.value}</p>
-            {s.href && (
-              <Link
-                href={s.href}
-                className="mt-3 inline-block text-xs font-medium text-indigo-600 hover:text-indigo-800"
-              >
-                View all →
-              </Link>
-            )}
-          </div>
+          <Card key={s.label}>
+            <CardContent className="p-6">
+              <p className="text-sm font-medium text-gray-500">{s.label}</p>
+              <p className="mt-2 text-3xl font-bold text-gray-900">{s.value}</p>
+              {s.href && (
+                <Link
+                  href={s.href}
+                  className="mt-3 inline-block text-xs font-medium text-indigo-600 hover:text-indigo-800"
+                >
+                  View all →
+                </Link>
+              )}
+            </CardContent>
+          </Card>
         ))}
       </div>
 
@@ -73,12 +78,11 @@ export default async function DashboardPage() {
           <p className="mt-1 text-sm text-gray-500">
             Add a site to get your embeddable chat widget.
           </p>
-          <Link
-            href="/sites"
-            className="mt-4 inline-block rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 transition-colors"
-          >
-            Create site
-          </Link>
+          <div className="mt-4">
+            <Link href="/sites" passHref>
+              <Button>Create site</Button>
+            </Link>
+          </div>
         </div>
       )}
     </div>

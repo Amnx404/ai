@@ -1,3 +1,6 @@
+import { Button } from "~/components/ui/button";
+import { Card, CardContent } from "~/components/ui/card";
+
 export default function SubscriptionPage() {
   const to = "hello@altegolabs.com";
   const subject = "ALT EGO — Beta access";
@@ -11,7 +14,7 @@ export default function SubscriptionPage() {
   )}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 
   return (
-    <div className="relative overflow-hidden rounded-3xl border border-gray-200 bg-white p-10 shadow-sm">
+    <Card className="relative overflow-hidden p-10 shadow-sm border-gray-200">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(17,24,39,0.06),transparent_55%)]" />
       <div className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-indigo-200/40 blur-3xl" />
       <div className="pointer-events-none absolute -left-24 -bottom-24 h-64 w-64 rounded-full bg-emerald-200/40 blur-3xl" />
@@ -34,14 +37,13 @@ export default function SubscriptionPage() {
             { title: "Pro", desc: "Better models + higher scrape coverage." },
             { title: "Scale", desc: "Multi-site ops + priority pipeline." },
           ].map((card) => (
-            <div
-              key={card.title}
-              className="relative overflow-hidden rounded-2xl border border-gray-200 bg-white p-5"
-            >
-              <p className="text-sm font-semibold text-gray-900">{card.title}</p>
-              <p className="mt-1 text-xs text-gray-600">{card.desc}</p>
-              <div className="mt-4 h-9 rounded-xl bg-gray-100" />
-            </div>
+            <Card key={card.title} className="relative overflow-hidden border-gray-200">
+              <CardContent className="p-5">
+                <p className="text-sm font-semibold text-gray-900">{card.title}</p>
+                <p className="mt-1 text-xs text-gray-600">{card.desc}</p>
+                <div className="mt-4 h-9 rounded-xl bg-gray-100" />
+              </CardContent>
+            </Card>
           ))}
         </div>
 
@@ -54,20 +56,14 @@ export default function SubscriptionPage() {
               </p>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <a
-                href={mailto}
-                className="inline-flex items-center justify-center rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-gray-800"
-              >
-                {to}
-              </a>
-              <a
-                href={gmail}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center justify-center rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-900 shadow-sm hover:bg-gray-50"
-              >
-                Open Gmail draft
-              </a>
+              <Button asChild>
+                <a href={mailto}>{to}</a>
+              </Button>
+              <Button variant="outline" asChild>
+                <a href={gmail} target="_blank" rel="noreferrer">
+                  Open Gmail draft
+                </a>
+              </Button>
             </div>
           </div>
           <p className="mt-3 text-[11px] font-medium text-gray-500">
@@ -75,7 +71,7 @@ export default function SubscriptionPage() {
           </p>
         </div>
       </div>
-    </div>
+    </Card>
   );
 }
 

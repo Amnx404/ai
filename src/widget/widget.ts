@@ -71,59 +71,89 @@ function linkSourcesInText(
   plainText: string,
   sources: Array<{ title: string; url: string; score: number }> | undefined
 ): string {
-  // Start from escaped HTML, then selectively re-introduce safe links.
-  let html = escapeHtml(plainText);
+  const tokens: string[] = [];
+  const tokenPrefix = `__LINK_${Math.random().toString(36).slice(2)}_`;
 
-  // 0) Custom link markup: [[label|https://example.com/path]]
-  // This lets the model emit clickable links without dumping bare URLs into the text.
-  html = html.replace(
+  const addToken = (html: string) => {
+    const id = `${tokenPrefix}${tokens.length}__`;
+    tokens.push(html);
+    return id;
+  };
+
+  let text = plainText;
+
+  // 0a) Standard markdown link: [label](https://example.com/path)
+  text = text.replace(
+    /\[([^\]]{1,120})\]\(((?:https?):\/\/[^\s<>"')]{1,2048})\)/g,
+    (_m, rawLabel: string, rawUrl: string) => {
+      const label = String(rawLabel).trim();
+      const url = String(rawUrl).trim();
+      if (!label || !url) return "";
+      return addToken(
+        `<a class="intext-source" href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`
+      );
+    }
+  );
+
+  // 0b) Custom link markup: [[label|https://example.com/path]]
+  text = text.replace(
     /\[\[([^\]|]{1,120})\|((?:https?):\/\/[^\s<>"']{1,2048})\]\]/g,
     (_m, rawLabel: string, rawUrl: string) => {
       const label = String(rawLabel).trim();
       const url = String(rawUrl).trim();
       if (!label || !url) return "";
-      return `<a class="intext-source" href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`;
+      return addToken(
+        `<a class="intext-source" href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`
+      );
     }
   );
 
   // 1) Auto-link any raw http(s) URLs that appear in the text.
-  // (The system prompt tries to prevent these, but users still paste them and some models emit them.)
-  html = html.replace(
-    /\bhttps?:\/\/[^\s<>"']+/gi,
+  text = text.replace(
+    /\bhttps?:\/\/[^\s<>"')]+/gi,
     (raw) =>
-      `<a class="intext-source" href="${escapeHtml(raw)}" target="_blank" rel="noopener">${escapeHtml(raw)}</a>`
+      addToken(
+        `<a class="intext-source" href="${escapeHtml(raw)}" target="_blank" rel="noopener">${escapeHtml(raw)}</a>`
+      )
   );
 
-  if (!sources?.length) return html;
+  if (sources?.length) {
+    // Link up to 5 sources that were actually mentioned (server filters).
+    for (const s of sources.slice(0, 5)) {
+      if (!s?.url) continue;
+      const rawTitle = (s.title || "").trim();
+      const mainTitle = (rawTitle.split("|")[0] ?? rawTitle).trim();
+      const shortLabel = shortSourceLabel(rawTitle || s.url || "Source");
 
-  // Link up to 5 sources that were actually mentioned (server filters).
-  for (const s of sources.slice(0, 5)) {
-    if (!s?.url) continue;
-    const rawTitle = (s.title || "").trim();
-    const mainTitle = (rawTitle.split("|")[0] ?? rawTitle).trim();
-    const shortLabel = shortSourceLabel(rawTitle || s.url || "Source");
-
-    const candidates = Array.from(
-      new Set([mainTitle, rawTitle, shortLabel].map((t) => t.trim()).filter(Boolean))
-    );
-
-    // Replace the first occurrence of the *best* candidate, case-insensitive.
-    let replaced = false;
-    for (const c of candidates) {
-      const escaped = escapeHtml(c);
-      const re = new RegExp(`\\b${escapeRegExp(escaped)}\\b`, "i");
-      if (!re.test(html)) continue;
-      html = html.replace(
-        re,
-        `<a class="intext-source" href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escaped}</a>`
+      const candidates = Array.from(
+        new Set([mainTitle, rawTitle, shortLabel].map((t) => t.trim()).filter(Boolean))
       );
-      replaced = true;
-      break;
-    }
 
-    // If none of the titles were found, don't inject anything.
-    if (!replaced) continue;
+      // Replace the first occurrence of the *best* candidate, case-insensitive.
+      let replaced = false;
+      for (const c of candidates) {
+        const re = new RegExp(`\\b${escapeRegExp(c)}\\b`, "i");
+        if (!re.test(text)) continue;
+        text = text.replace(
+          re,
+          addToken(
+            `<a class="intext-source" href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escapeHtml(c)}</a>`
+          )
+        );
+        replaced = true;
+        break;
+      }
+    }
   }
+
+  // 3) Escape the remaining plain text (which now contains safe __LINK_...__ tokens)
+  let html = escapeHtml(text);
+
+  // 4) Restore the tokens with actual HTML
+  for (let i = 0; i < tokens.length; i++) {
+    html = html.replace(`${tokenPrefix}${i}__`, tokens[i]);
+  }
+
   return html;
 }
 
@@ -168,7 +198,7 @@ export class ChatWidget {
       this.config = {
         id: this.siteId,
         primaryColor: "#6366f1",
-        title: "Chat",
+        title: "Alt",
         greeting: "Hi! How can I help you today?",
         allowedTopics: [],
       };
@@ -218,6 +248,11 @@ export class ChatWidget {
     this.shadow.innerHTML = `
       <style>${getStyles(color)}</style>
 
+      <div id="nudge">
+        <div class="nudge-text">Got questions? Chat with me! <span class="wave">👋</span></div>
+        <button id="close-nudge" aria-label="Close nudge">&times;</button>
+      </div>
+
       <button id="launcher" aria-label="Open chat" title="Open chat">
         ${
           launcherIcon
@@ -225,7 +260,8 @@ export class ChatWidget {
             : ""
         }
         <svg class="icon-chat" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-          <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/>
+          <path d="M11.053 2.524a1 1 0 0 1 1.894 0l2.06 6.513a1 1 0 0 0 .629.629l6.513 2.06a1 1 0 0 1 0 1.894l-6.513 2.06a1 1 0 0 0-.629.629l-2.06 6.513a1 1 0 0 1-1.894 0l-2.06-6.513a1 1 0 0 0-.629-.629l-6.513-2.06a1 1 0 0 1 0-1.894l6.513-2.06a1 1 0 0 0 .629-.629l2.06-6.513z"/>
+          <path d="M19.553 1.524a.5.5 0 0 1 .894 0l.76 2.413a.5.5 0 0 0 .329.329l2.413.76a.5.5 0 0 1 0 .894l-2.413.76a.5.5 0 0 0-.329.329l-.76 2.413a.5.5 0 0 1-.894 0l-.76-2.413a.5.5 0 0 0-.329-.329l-2.413-.76a.5.5 0 0 1 0-.894l2.413-.76a.5.5 0 0 0 .329-.329l.76-2.413z"/>
         </svg>
         <svg class="icon-close" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
           <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
@@ -246,7 +282,7 @@ export class ChatWidget {
             }
           </div>
           <div id="header-info">
-            <div id="header-title">${escapeHtml(this.config?.title ?? "Chat")}</div>
+            <div id="header-title">${escapeHtml(this.config?.title ?? "Alt")}</div>
             <div id="header-status">
               <span id="status-dot"></span>
               <span>Online</span>
@@ -350,8 +386,26 @@ export class ChatWidget {
     const grip = this.shadow.getElementById("resize-grip") as HTMLButtonElement | null;
     const input = this.shadow.getElementById("input") as HTMLTextAreaElement;
     const sendBtn = this.shadow.getElementById("send-btn") as HTMLButtonElement;
+    const nudge = this.shadow.getElementById("nudge");
+    const closeNudgeBtn = this.shadow.getElementById("close-nudge");
 
-    launcher.addEventListener("click", () => this.toggle());
+    // Show nudge after a short delay if chat wasn't opened
+    setTimeout(() => {
+      if (!this.isOpen && nudge) {
+        nudge.classList.add("visible");
+      }
+    }, 3000);
+
+    closeNudgeBtn?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      nudge?.classList.remove("visible");
+    });
+
+    launcher.addEventListener("click", () => {
+      nudge?.classList.remove("visible");
+      this.toggle();
+    });
+    
     resetBtn?.addEventListener("click", () => this.resetChat());
     closeBtn.addEventListener("click", () => this.close());
 
