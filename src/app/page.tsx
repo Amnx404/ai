@@ -589,19 +589,13 @@ export default function HomePage() {
           initial={{ y: -50, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
-          className="pointer-events-auto flex items-center justify-between px-2 py-2 bg-black/40 backdrop-blur-3xl border border-white/10 rounded-full shadow-[0_0_40px_rgba(0,0,0,0.5),0_0_0_1px_rgba(255,255,255,0.05)_inset] w-full max-w-5xl transition-all duration-500 hover:bg-black/50 hover:border-white/15"
+          className="pointer-events-auto flex items-center justify-between px-2 py-2 bg-black/40 backdrop-blur-3xl border border-white/10 rounded-full shadow-[0_0_40px_rgba(0,0,0,0.5),0_0_0_1px_rgba(255,255,255,0.05)_inset] w-full max-w-3xl transition-all duration-500 hover:bg-black/50 hover:border-white/15"
         >
           <Link href="/" className="flex items-center gap-3 pl-4 pr-6 py-2 rounded-full hover:bg-white/5 transition-colors">
             <BrandLogo size="sm" />
-            <span className="font-mono text-[10px] tracking-[0.3em] uppercase font-bold text-white mt-0.5">ALT EGO</span>
+            <span className="font-mono text-sm tracking-[0.2em] uppercase font-bold text-white mt-0.5">ALT EGO</span>
           </Link>
           
-          <div className="hidden md:flex items-center gap-1 p-1 bg-white/[0.02] border border-white/5 rounded-full">
-            <Link href="/dashboard" className="px-5 py-2 text-[13px] font-medium text-neutral-400 hover:text-white hover:bg-white/5 rounded-full transition-all">Product</Link>
-            <Link href="/contact" className="px-5 py-2 text-[13px] font-medium text-neutral-400 hover:text-white hover:bg-white/5 rounded-full transition-all">Enterprise</Link>
-            <Link href="/contact" className="px-5 py-2 text-[13px] font-medium text-neutral-400 hover:text-white hover:bg-white/5 rounded-full transition-all">Company</Link>
-          </div>
-
           <div className="flex items-center gap-2 pr-1">
             <Link href="/contact" className="hidden sm:flex text-xs font-semibold text-neutral-400 hover:text-white transition-colors px-4 py-2">
               Talk to us
