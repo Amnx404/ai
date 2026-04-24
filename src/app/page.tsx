@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+import Script from "next/script";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { IBM_Plex_Mono } from "next/font/google";
@@ -943,6 +944,10 @@ export default function HomePage() {
           </div>
         </div>
       </footer>
+      <Script id="chat-widget-config">
+        {`window.ChatWidget = { siteId: "cmobwwqxn00l7ry1ysx2iyo9u" };`}
+      </Script>
+      <Script async src="https://altegolabs.com/widget.js" />
     </main>
   );
 }
