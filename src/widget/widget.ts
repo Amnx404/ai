@@ -22,6 +22,17 @@ interface ChatWidgetGlobal {
   siteId: string;
   apiBase?: string;
   pageIconUrl?: string;
+  /** Override current page URL for SPAs (defaults to `window.location.href`). */
+  pageUrl?: string;
+  /** Override path (defaults to `window.location.pathname`). */
+  pagePath?: string;
+  /** Override document title (defaults to `document.title`). */
+  pageTitle?: string;
+  /**
+   * Override visible page text for SPAs (otherwise we read `main` / `article` / `body` innerText).
+   * Plain text; keep under ~28k chars for transport limits.
+   */
+  pageContent?: string;
 }
 
 declare global {
@@ -32,6 +43,36 @@ declare global {
 
 const SESSION_KEY = "rr_chat_session";
 const MESSAGES_KEY = "rr_chat_messages";
+
+/** Max chars of visible page text sent to the API (server caps further). */
+const MAX_PAGE_TEXT_CLIENT = 28_000;
+
+function normalizeVisiblePageText(raw: string): string {
+  return raw.replace(/\u0000/g, "").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Best-effort visible text from the host document (not the widget shadow).
+ * Prefers main/article; falls back to body.
+ */
+function extractHostPageText(maxLen: number): string {
+  const g = window.ChatWidget;
+  if (typeof g?.pageContent === "string" && g.pageContent.trim()) {
+    return normalizeVisiblePageText(g.pageContent).slice(0, maxLen);
+  }
+  const candidates: HTMLElement[] = [];
+  for (const sel of ["main", "article", '[role="main"]']) {
+    const el = document.querySelector(sel);
+    if (el instanceof HTMLElement) candidates.push(el);
+  }
+  if (document.body instanceof HTMLElement) candidates.push(document.body);
+
+  for (const el of candidates) {
+    const t = normalizeVisiblePageText(el.innerText ?? "");
+    if (t.length > 80) return t.slice(0, maxLen);
+  }
+  return "";
+}
 
 function getBaseUrl(siteId: string): string {
   const scripts = document.querySelectorAll<HTMLScriptElement>("script[src*='widget.js']");
@@ -326,6 +367,7 @@ export class ChatWidget {
           <a href="${escapeHtml(this.config?.appUrl ?? this.baseUrl)}" target="_blank" rel="noopener">
             Powered by Alt Ego Labs
           </a>
+          <div id="privacy-note">Please avoid sharing sensitive personal information.</div>
         </div>
       </div>
     `;
@@ -479,6 +521,34 @@ export class ChatWidget {
     this.shadow.getElementById("panel")?.classList.remove("open");
   }
 
+  /** Host page the widget is embedded on — sent to the API for retrieval + prompting. */
+  private getPageContext(): {
+    url: string;
+    pathname: string;
+    title: string;
+    content: string;
+  } {
+    const g = window.ChatWidget;
+    let url = "";
+    try {
+      if (typeof g?.pageUrl === "string" && g.pageUrl.trim()) {
+        url = new URL(g.pageUrl.trim(), window.location.origin).href;
+      } else {
+        url = window.location.href;
+      }
+    } catch {
+      url = window.location.href;
+    }
+    const pathname =
+      typeof g?.pagePath === "string" && g.pagePath.trim()
+        ? g.pagePath.trim()
+        : window.location.pathname;
+    const rawTitle = typeof g?.pageTitle === "string" ? g.pageTitle : document.title;
+    const title = (rawTitle ?? "").slice(0, 500);
+    const content = extractHostPageText(MAX_PAGE_TEXT_CLIENT);
+    return { url, pathname, title, content };
+  }
+
   private async ensureSession() {
     if (this.sessionId && this.token) return;
 
@@ -486,7 +556,10 @@ export class ChatWidget {
       const res = await fetch(`${this.baseUrl}/api/v1/session`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ siteId: this.siteId }),
+        body: JSON.stringify({
+          siteId: this.siteId,
+          pageContext: this.getPageContext(),
+        }),
       });
       if (res.ok) {
         const data = (await res.json()) as { token: string; sessionId: string };
@@ -544,6 +617,7 @@ export class ChatWidget {
           sessionId: this.sessionId,
           token: this.token,
           stream: true,
+          pageContext: this.getPageContext(),
         }),
       });
 

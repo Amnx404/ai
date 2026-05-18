@@ -34,7 +34,8 @@ export function EmbedSnippet({ siteId }: { siteId: string }) {
             <code className="rounded bg-gray-100 px-1 py-0.5 text-xs">
               &lt;/body&gt;
             </code>{" "}
-            tag on your site.
+            tag on your site. The widget sends the current page URL, title, and a large
+            excerpt of visible page text with each message so Alt can answer in context.
           </p>
         </div>
         <button

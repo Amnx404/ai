@@ -5,8 +5,16 @@ import { db } from "~/server/db";
 import { signWidgetToken } from "~/lib/widget-jwt";
 import { getRealIp, rateLimit } from "~/lib/rate-limit";
 
+const pageContextSchema = z.object({
+  url: z.string().url(),
+  pathname: z.string().max(2048).optional(),
+  title: z.string().max(500).optional(),
+  content: z.string().max(32_000).optional(),
+});
+
 const bodySchema = z.object({
   siteId: z.string().min(1),
+  pageContext: pageContextSchema.optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -22,7 +30,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
 
-  const { siteId } = parsed.data;
+  const { siteId, pageContext } = parsed.data;
   const origin = (req.headers.get("origin") ?? "").trim();
 
   const site = await db.site.findFirst({
@@ -69,7 +77,20 @@ export async function POST(req: NextRequest) {
   const token = await signWidgetToken({ siteId: site.id, sessionId: session.id });
 
   await db.analyticsEvent.create({
-    data: { siteId: site.id, type: "chat_start" },
+    data: {
+      siteId: site.id,
+      type: "chat_start",
+      ...(pageContext
+        ? {
+            metadata: {
+              pageUrl: pageContext.url,
+              pagePath: pageContext.pathname ?? null,
+              pageTitle: pageContext.title ?? null,
+              pageContentChars: pageContext.content?.length ?? 0,
+            },
+          }
+        : {}),
+    },
   });
 
   const allowOrigin =

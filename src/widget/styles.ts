@@ -592,17 +592,29 @@ export function getStyles(primaryColor: string): string {
     /* Powered by */
     #powered-by {
       text-align: center;
-      font-size: 11px;
+      font-size: 10px;
       color: var(--text-secondary);
-      padding: 8px;
+      padding: 4px 8px 5px;
       background: rgba(255,255,255,0.6);
       flex-shrink: 0;
-      font-weight: 500;
+      font-weight: 400;
+      line-height: 1.2;
+      opacity: 0.75;
     }
 
     #powered-by a {
       color: var(--primary);
       text-decoration: none;
+      opacity: 0.78;
+    }
+
+    #privacy-note {
+      margin-top: 1px;
+      font-size: 9px;
+      line-height: 1.15;
+      color: color-mix(in srgb, var(--text-secondary) 65%, #ffffff);
+      font-weight: 400;
+      opacity: 0.62;
     }
 
     /* Mobile responsive */

@@ -22,7 +22,7 @@ export const env = createEnv({
     // Optional: Pinecone Inference embedding model id (must match index dimension).
     PINECONE_EMBED_MODEL: z.string().min(1).optional(),
     // Internal scraper pipeline service (FastAPI) base URL.
-    SCRAPER_PIPELINE_BASE_URL: z.string().url().optional(),
+    SCRAPER_PIPELINE_BASE_URL: z.string().url().default("http://localhost:8000"),
     // Public base URL that the scraper pipeline can POST callbacks to.
     // Example: https://app.yourdomain.com
     callback_URL: z.string().url().optional(),
@@ -30,6 +30,12 @@ export const env = createEnv({
     SCRAPER_FINETUNE_MODEL: z.string().min(1).optional(),
     // Prompt used by scraper pipeline when finetune=true (markdown cleaner).
     FINETUNE_PROMPT: z.string().min(1).optional(),
+    // Secret required to trigger scheduled link-group crawls.
+    KB_CRON_SECRET: z.string().min(1).optional(),
+    // Optional UTC hour (0-23) when cron processing is allowed.
+    KB_CRON_UTC_HOUR: z.coerce.number().int().min(0).max(23).optional(),
+    // Max number of sites processed concurrently per cron batch.
+    KB_CRON_BATCH_SIZE: z.coerce.number().int().min(1).max(50).optional(),
     WIDGET_JWT_SECRET: z.string().min(1),
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   },
@@ -49,10 +55,13 @@ export const env = createEnv({
     PINECONE_INDEX: process.env.PINECONE_INDEX,
     PINECONE_INDEX_HOST: process.env.PINECONE_INDEX_HOST,
     PINECONE_EMBED_MODEL: process.env.PINECONE_EMBED_MODEL,
-    SCRAPER_PIPELINE_BASE_URL: process.env.SCRAPER_PIPELINE_BASE_URL,
+    SCRAPER_PIPELINE_BASE_URL: "http://localhost:8000",
     callback_URL: process.env.callback_URL,
     SCRAPER_FINETUNE_MODEL: process.env.SCRAPER_FINETUNE_MODEL,
     FINETUNE_PROMPT: process.env.FINETUNE_PROMPT,
+    KB_CRON_SECRET: process.env.KB_CRON_SECRET,
+    KB_CRON_UTC_HOUR: process.env.KB_CRON_UTC_HOUR,
+    KB_CRON_BATCH_SIZE: process.env.KB_CRON_BATCH_SIZE,
     WIDGET_JWT_SECRET: process.env.WIDGET_JWT_SECRET,
     NODE_ENV: process.env.NODE_ENV,
   },

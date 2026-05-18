@@ -2,12 +2,24 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 
 import { db } from "~/server/db";
-import { ragStream } from "~/lib/rag";
+import {
+  ragStream,
+  summarizeHostPageForLog,
+  type HostPageContext,
+} from "~/lib/rag";
 import { resolvePineconeTarget } from "~/lib/pinecone";
 import { env } from "~/env.js";
 import { verifyWidgetToken } from "~/lib/widget-jwt";
 import { getRealIp, rateLimit } from "~/lib/rate-limit";
 import { getLangfuse, getLangfuseTraceUrl } from "~/lib/langfuse";
+
+const pageContextSchema = z.object({
+  url: z.string().url(),
+  pathname: z.string().max(2048).optional(),
+  title: z.string().max(500).optional(),
+  /** Visible page text from the browser (widget); capped server-side. */
+  content: z.string().max(32_000).optional(),
+});
 
 const bodySchema = z.object({
   siteId: z.string().min(1),
@@ -32,6 +44,7 @@ const bodySchema = z.object({
   sessionId: z.string().optional(),
   token: z.string().optional(),
   stream: z.boolean().default(true),
+  pageContext: pageContextSchema.optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -47,7 +60,15 @@ export async function POST(req: NextRequest) {
     return sseError("Invalid request", 400, req);
   }
 
-  const { siteId, messages, sessionId, token } = parsed.data;
+  const { siteId, messages, sessionId, token, pageContext } = parsed.data;
+  const hostPage: HostPageContext | undefined = pageContext
+    ? {
+        url: pageContext.url,
+        pathname: pageContext.pathname,
+        title: pageContext.title,
+        content: pageContext.content,
+      }
+    : undefined;
 
   // Verify JWT if provided
   if (token) {
@@ -88,6 +109,7 @@ export async function POST(req: NextRequest) {
       modelId: site.modelId,
       temperature: site.temperature,
       allowedTopics: site.allowedTopics,
+      hostPage: summarizeHostPageForLog(hostPage),
     },
   });
   if (trace) {
@@ -116,7 +138,7 @@ export async function POST(req: NextRequest) {
         trace?.span?.({
           name: "chat_turn",
           input: { messages },
-          metadata: { siteId, origin },
+          metadata: { siteId, origin, hostPage: summarizeHostPageForLog(hostPage) },
         }) ?? null;
 
       const generation =
@@ -163,7 +185,7 @@ export async function POST(req: NextRequest) {
       };
 
       try {
-        for await (const event of ragStream(site, messages)) {
+        for await (const event of ragStream(site, messages, { hostPage })) {
           if (event.type === "token") {
             if (firstTokenAtMs === null) firstTokenAtMs = Date.now();
             fullResponse += event.content;

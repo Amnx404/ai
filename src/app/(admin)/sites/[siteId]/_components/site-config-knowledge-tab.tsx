@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Plus, Trash2 } from "lucide-react";
 
 import {
   Collapsible,
@@ -9,8 +9,27 @@ import {
   CollapsibleTrigger,
 } from "~/components/ui/collapsible";
 import { cn } from "~/lib/utils";
+import {
+  allowedFrequenciesForPlan,
+  clampFrequencyForPlan,
+  isScheduleEnabledForPlan,
+  type LinkGroupFrequency,
+} from "~/lib/link-groups";
 
-import { Field, ProgressStep, UrlListInput, inputCls } from "./site-config-form.ui";
+import { Field, ProgressStep, inputCls } from "./site-config-form.ui";
+
+const FREQUENCY_OPTIONS: Array<{ value: LinkGroupFrequency; label: string }> = [
+  { value: "manual", label: "Manual (run from app)" },
+  { value: "daily", label: "Daily" },
+  { value: "every_3_days", label: "Every 3 days" },
+  { value: "weekly", label: "Weekly" },
+  { value: "every_2_weeks", label: "Every 2 weeks" },
+  { value: "monthly", label: "Monthly" },
+];
+
+function frequencyLabel(frequency: LinkGroupFrequency): string {
+  return FREQUENCY_OPTIONS.find((opt) => opt.value === frequency)?.label ?? "Manual (run from app)";
+}
 
 function ConfigHintLabel({
   children,
@@ -69,6 +88,19 @@ export function SiteConfigKnowledgeTab({
     scrapeAllowedPrefixes: string;
     scrapeCoverage: string;
     scrapeSpeed: string;
+    linkGroups: Array<{
+      id: string;
+      name: string;
+      frequency: LinkGroupFrequency;
+      allowedDomains: string[];
+      lastRunAt?: string | null;
+      links: Array<{
+        url: string;
+        depth: number;
+        followExternalDomains: boolean;
+        pageWildcardPostfixes: string[];
+      }>;
+    }>;
   };
   setForm: (next: typeof form) => void;
   normalizeHttps: (raw: string) => string;
@@ -88,10 +120,73 @@ export function SiteConfigKnowledgeTab({
     "scrape" | "prepare" | "upload" | null
   >(null);
   const [scrapedUrlsOpen, setScrapedUrlsOpen] = useState(false);
+  const [selectedGroupId, setSelectedGroupId] = useState<string>("");
 
   const kbBootstrapSeq = useRef(0);
   const kbStartInFlightRef = useRef(false);
   const kbStartSeqRef = useRef(0);
+  const scheduleEnabled = useMemo(() => isScheduleEnabledForPlan(plan), [plan]);
+  const allowedFrequencies = useMemo(() => allowedFrequenciesForPlan(plan), [plan]);
+
+  useEffect(() => {
+    if (form.linkGroups.length === 0) {
+      setSelectedGroupId("");
+      return;
+    }
+    if (!selectedGroupId || !form.linkGroups.some((group) => group.id === selectedGroupId)) {
+      setSelectedGroupId(form.linkGroups[0]!.id);
+    }
+  }, [form.linkGroups, selectedGroupId]);
+
+  useEffect(() => {
+    const nextGroups = form.linkGroups.map((group) => {
+      const nextFrequency = clampFrequencyForPlan(group.frequency, plan);
+      if (nextFrequency === group.frequency) return group;
+      return { ...group, frequency: nextFrequency };
+    });
+    const changed = nextGroups.some((group, idx) => group.frequency !== form.linkGroups[idx]?.frequency);
+    if (!changed) return;
+    setForm({
+      ...form,
+      linkGroups: nextGroups,
+    });
+    onPersist();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan, form.linkGroups]);
+
+  const upsertLinkGroup = (
+    groupId: string,
+    updater: (group: (typeof form.linkGroups)[number]) => (typeof form.linkGroups)[number],
+  ) => {
+    setForm({
+      ...form,
+      linkGroups: form.linkGroups.map((group) => (group.id === groupId ? updater(group) : group)),
+    });
+  };
+
+  const addLinkGroup = () => {
+    const nextId = `group-${Date.now()}`;
+    const next = {
+      id: nextId,
+      name: `Group ${form.linkGroups.length + 1}`,
+      frequency: clampFrequencyForPlan("daily", plan),
+      allowedDomains: [],
+      lastRunAt: null,
+      links: [
+        {
+          url: "",
+          depth: 1,
+          followExternalDomains: false,
+          pageWildcardPostfixes: [],
+        },
+      ],
+    };
+    setForm({
+      ...form,
+      linkGroups: [...form.linkGroups, next],
+    });
+    setSelectedGroupId(nextId);
+  };
 
   async function readResponseJson(res: Response) {
     const text = await res.text().catch(() => "");
@@ -254,6 +349,7 @@ export function SiteConfigKnowledgeTab({
         body: JSON.stringify({
           siteId,
           maxRecords: 500,
+          groupId: selectedGroupId || undefined,
         }),
       });
       const json = (await readResponseJson(res)) as any;
@@ -404,11 +500,36 @@ export function SiteConfigKnowledgeTab({
                 </div>
 
                 <div className="flex flex-col gap-2 sm:items-end">
+                  <div className="w-full sm:w-[220px]">
+                    <label className="mb-1 block text-xs font-medium text-gray-600">Run group</label>
+                    <select
+                      value={selectedGroupId}
+                      onChange={(e) => setSelectedGroupId(e.target.value)}
+                      onBlur={onPersist}
+                      className={inputCls}
+                      disabled={form.linkGroups.length === 0 || isKbPolling || kbLoading || kbStarting}
+                    >
+                      {form.linkGroups.length === 0 ? (
+                        <option value="">No groups configured</option>
+                      ) : null}
+                      {form.linkGroups.map((group) => (
+                        <option key={group.id} value={group.id}>
+                          {group.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
                       onClick={() => void runKbPipeline()}
-                      disabled={isKbPolling || kbLoading || kbStarting}
+                      disabled={
+                        isKbPolling ||
+                        kbLoading ||
+                        kbStarting ||
+                        form.linkGroups.length === 0 ||
+                        !selectedGroupId
+                      }
                       className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-60"
                     >
                       {primaryLabel}
@@ -438,40 +559,298 @@ export function SiteConfigKnowledgeTab({
                   </div>
 
                   <p className="text-xs text-gray-500">
-                    {kbRunId ? "" : "No runs yet."}
+                    {form.linkGroups.length === 0
+                      ? "Create at least one link group to run scraping."
+                      : kbRunId
+                        ? ""
+                        : "No runs yet."}
                   </p>
                 </div>
               </div>
 
               <Field label="Config">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <ConfigHintLabel hint="Starting places for the crawl: full https links to the first pages we open (like your homepage or a docs landing page). We discover more pages by following links from here.">
-                      Seed URLs
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <ConfigHintLabel hint="Create multiple groups for different areas of your site. Each group has its own schedule and links, and each link can control crawl depth and whether to follow external domains.">
+                      Link groups
                     </ConfigHintLabel>
-                    <UrlListInput
-                      value={form.scrapeSeedUrls}
-                      placeholder="https://example.com/docs"
-                      normalize={normalizeHttps}
-                      onChange={(next) => setForm({ ...form, scrapeSeedUrls: next })}
-                      onPersist={onPersist}
-                    />
-                  </div>
-                  <div>
-                    <ConfigHintLabel
-                      align="right"
-                      hint="We only keep pages whose web address starts with one of these paths—usually your site’s root (https://yoursite.com/) or a folder (https://yoursite.com/docs/). That keeps the crawl on your content and off random external links."
+                    <button
+                      type="button"
+                      onClick={addLinkGroup}
+                      className="inline-flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
                     >
-                      Allowed prefixes
-                    </ConfigHintLabel>
-                    <UrlListInput
-                      value={form.scrapeAllowedPrefixes}
-                      placeholder="https://example.com/docs/"
-                      normalize={normalizeHttps}
-                      onChange={(next) => setForm({ ...form, scrapeAllowedPrefixes: next })}
-                      onPersist={onPersist}
-                    />
+                      <Plus className="h-3.5 w-3.5" />
+                      Add group
+                    </button>
                   </div>
+
+                  {form.linkGroups.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-3 py-4 text-sm text-gray-600">
+                      No groups yet. Add a group and at least one link.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {form.linkGroups.map((group) => (
+                        <div key={group.id} className="rounded-xl border border-gray-200 p-3">
+                          <div className="mb-3 grid gap-2 sm:grid-cols-[1fr_220px_auto] sm:items-end">
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-gray-600">
+                                Group name
+                              </label>
+                              <input
+                                value={group.name}
+                                onChange={(e) =>
+                                  upsertLinkGroup(group.id, (curr) => ({
+                                    ...curr,
+                                    name: e.target.value,
+                                  }))
+                                }
+                                onBlur={onPersist}
+                                className={inputCls}
+                                placeholder="Docs links"
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-gray-600">
+                                Frequency
+                              </label>
+                              <select
+                                value={group.frequency}
+                                onChange={(e) =>
+                                  upsertLinkGroup(group.id, (curr) => ({
+                                    ...curr,
+                                    frequency: clampFrequencyForPlan(
+                                      e.target.value as LinkGroupFrequency,
+                                      plan,
+                                    ),
+                                  }))
+                                }
+                                onBlur={onPersist}
+                                className={inputCls}
+                                disabled={!scheduleEnabled && plan === "FREE"}
+                              >
+                                {(allowedFrequencies.length > 0
+                                  ? allowedFrequencies
+                                  : (["manual"] as LinkGroupFrequency[])).map((freq) => (
+                                    <option key={freq} value={freq}>
+                                      {frequencyLabel(freq)}
+                                    </option>
+                                  ))}
+                              </select>
+                              {!scheduleEnabled ? (
+                                <p className="mt-1 text-[11px] text-amber-700">
+                                  Free plan supports manual runs only.
+                                </p>
+                              ) : plan === "PRO" ? (
+                                <p className="mt-1 text-[11px] text-gray-500">
+                                  Pro supports manual or monthly scheduling.
+                                </p>
+                              ) : null}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const next = form.linkGroups.filter((x) => x.id !== group.id);
+                                setForm({ ...form, linkGroups: next });
+                                onPersist();
+                              }}
+                              className="inline-flex items-center justify-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-2 text-xs font-semibold text-red-700 hover:bg-red-100"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Remove
+                            </button>
+                          </div>
+
+                          <div className="mb-3">
+                            <label className="mb-1 block text-xs font-medium text-gray-600">
+                              Allowed domains for this group (optional)
+                            </label>
+                            <input
+                              value={group.allowedDomains.join(", ")}
+                              onChange={(e) =>
+                                upsertLinkGroup(group.id, (curr) => ({
+                                  ...curr,
+                                  allowedDomains: e.target.value
+                                    .split(",")
+                                    .map((d) => d.trim().toLowerCase())
+                                    .filter(Boolean),
+                                }))
+                              }
+                              onBlur={onPersist}
+                              className={inputCls}
+                              placeholder="example.com, docs.example.com"
+                            />
+                            <p className="mt-1 text-[11px] text-gray-500">
+                              When set, scraping is restricted to these domains plus depth rules.
+                            </p>
+                          </div>
+
+                          <div className="space-y-2">
+                            {group.links.map((link, linkIdx) => (
+                              <div
+                                key={`${group.id}-link-${linkIdx}`}
+                                className="rounded-lg border border-gray-200 bg-gray-50 p-2"
+                              >
+                                <div className="grid gap-2 sm:grid-cols-[1fr_120px_180px_auto] sm:items-end">
+                                  <div>
+                                    <label className="mb-1 block text-xs font-medium text-gray-600">
+                                      Link URL
+                                    </label>
+                                    <input
+                                      value={link.url}
+                                      onChange={(e) =>
+                                        upsertLinkGroup(group.id, (curr) => ({
+                                          ...curr,
+                                          links: curr.links.map((item, idx) =>
+                                            idx === linkIdx
+                                              ? {
+                                                  ...item,
+                                                  url: e.target.value,
+                                                }
+                                              : item,
+                                          ),
+                                        }))
+                                      }
+                                      onBlur={() => {
+                                        const normalized = normalizeHttps(link.url);
+                                        upsertLinkGroup(group.id, (curr) => ({
+                                          ...curr,
+                                          links: curr.links.map((item, idx) =>
+                                            idx === linkIdx
+                                              ? {
+                                                  ...item,
+                                                  url: normalized,
+                                                }
+                                              : item,
+                                          ),
+                                        }));
+                                        onPersist();
+                                      }}
+                                      className={inputCls}
+                                      placeholder="https://example.com/docs"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="mb-1 block text-xs font-medium text-gray-600">
+                                      Depth
+                                    </label>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      step={1}
+                                      value={link.depth}
+                                      onChange={(e) =>
+                                        upsertLinkGroup(group.id, (curr) => ({
+                                          ...curr,
+                                          links: curr.links.map((item, idx) =>
+                                            idx === linkIdx
+                                              ? {
+                                                  ...item,
+                                                  depth: Math.max(0, Math.trunc(Number(e.target.value) || 0)),
+                                                }
+                                              : item,
+                                          ),
+                                        }))
+                                      }
+                                      onBlur={onPersist}
+                                      className={inputCls}
+                                    />
+                                  </div>
+                                  <label className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-2.5 py-2 text-xs font-medium text-gray-700">
+                                    <input
+                                      type="checkbox"
+                                      checked={link.followExternalDomains}
+                                      onChange={(e) =>
+                                        upsertLinkGroup(group.id, (curr) => ({
+                                          ...curr,
+                                          links: curr.links.map((item, idx) =>
+                                            idx === linkIdx
+                                              ? {
+                                                  ...item,
+                                                  followExternalDomains: e.target.checked,
+                                                }
+                                              : item,
+                                          ),
+                                        }))
+                                      }
+                                      onBlur={onPersist}
+                                      className="h-4 w-4 rounded border-gray-300"
+                                    />
+                                    Follow other domains
+                                  </label>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      upsertLinkGroup(group.id, (curr) => ({
+                                        ...curr,
+                                        links: curr.links.filter((_, idx) => idx !== linkIdx),
+                                      }));
+                                      onPersist();
+                                    }}
+                                    disabled={group.links.length <= 1}
+                                    className="rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+                                  >
+                                    Remove link
+                                  </button>
+                                </div>
+                                <div className="mt-2">
+                                  <label className="mb-1 block text-xs font-medium text-gray-600">
+                                    Page wildcard postfixes (optional)
+                                  </label>
+                                  <input
+                                    value={link.pageWildcardPostfixes.join(", ")}
+                                    onChange={(e) =>
+                                      upsertLinkGroup(group.id, (curr) => ({
+                                        ...curr,
+                                        links: curr.links.map((item, idx) =>
+                                          idx === linkIdx
+                                            ? {
+                                                ...item,
+                                                pageWildcardPostfixes: e.target.value
+                                                  .split(",")
+                                                  .map((pattern) => pattern.trim())
+                                                  .filter(Boolean),
+                                              }
+                                            : item,
+                                        ),
+                                      }))
+                                    }
+                                    onBlur={onPersist}
+                                    className={inputCls}
+                                    placeholder="/*, /blog/*, /docs/*"
+                                  />
+                                  <p className="mt-1 text-[11px] text-gray-500">
+                                    Patterns are appended to this link URL (supports `*` wildcard).
+                                  </p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              upsertLinkGroup(group.id, (curr) => ({
+                                ...curr,
+                                links: [
+                                  ...curr.links,
+                                  {
+                                    url: "",
+                                    depth: 1,
+                                    followExternalDomains: false,
+                                    pageWildcardPostfixes: [],
+                                  },
+                                ],
+                              }));
+                            }}
+                            className="mt-2 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                          >
+                            + Add link
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">

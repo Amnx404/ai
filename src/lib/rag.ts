@@ -22,9 +22,71 @@ export interface Source {
   score: number;
 }
 
+/** Where the embed is mounted (current browser page). Improves retrieval + answers. */
+export type HostPageContext = {
+  url: string;
+  pathname?: string;
+  title?: string;
+  /** Visible text from the host page (browser); may be truncated client- and server-side. */
+  content?: string;
+};
+
+/** Max chars of host page text injected into the model system prompt. */
+const HOST_PAGE_CONTENT_SYSTEM_MAX = 14_000;
+/** Shorter excerpt for the query planner only. */
+const HOST_PAGE_CONTENT_PLANNER_MAX = 6_000;
+
+function truncateHostPageText(s: string, max: number): string {
+  const t = s.replace(/\u0000/g, "").trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, max)}\n\n[…page text truncated…]`;
+}
+
+function hostPageNarrative(hostPage: HostPageContext | undefined): string {
+  if (!hostPage?.url?.trim()) return "";
+  let path = hostPage.pathname?.trim() ?? "";
+  if (!path) {
+    try {
+      path = new URL(hostPage.url).pathname;
+    } catch {
+      path = "";
+    }
+  }
+  const title = hostPage.title?.trim() || "(unknown document title)";
+  return `The visitor is currently viewing this page on the host website:
+- Full URL: ${hostPage.url.trim()}
+- Path: ${path || "(unknown)"}
+- Document title: ${title}
+
+When the question is ambiguous, interpret it in light of this page. Prefer retrieved sources whose URL or topic clearly relates to this path or title. If the question is clearly general, you may answer more broadly using retrieval.`;
+}
+
+function hostPageTextBlock(hostPage: HostPageContext | undefined, maxChars: number): string {
+  const raw = hostPage?.content?.trim();
+  if (!raw) return "";
+  const excerpt = truncateHostPageText(raw, maxChars);
+  return `VISIBLE PAGE TEXT (what appears in the visitor's browser; excerpt, may be truncated):
+${excerpt}`;
+}
+
+/** Safe for logs / tracing — never include full `content`. */
+export function summarizeHostPageForLog(hostPage: HostPageContext | undefined): Record<
+  string,
+  unknown
+> | null {
+  if (!hostPage?.url?.trim()) return null;
+  return {
+    url: hostPage.url,
+    pathname: hostPage.pathname ?? null,
+    title: hostPage.title ?? null,
+    contentChars: hostPage.content?.length ?? 0,
+  };
+}
+
 function buildQueryPlannerPrompt(
   messages: ChatMessage[],
-  allowedTopics: string[]
+  allowedTopics: string[],
+  hostPage?: HostPageContext
 ): string {
   const recentMessages = messages.slice(-MAX_CONTEXT_MESSAGES);
   const lastUserMsg = [...recentMessages].reverse().find((m) => m.role === "user");
@@ -33,6 +95,9 @@ function buildQueryPlannerPrompt(
     allowedTopics.length > 0
       ? `The knowledge base covers: ${allowedTopics.join(", ")}.`
       : "";
+
+  const hostHint = hostPageNarrative(hostPage);
+  const hostText = hostPageTextBlock(hostPage, HOST_PAGE_CONTENT_PLANNER_MAX);
 
   const recentSources = recentMessages
     .filter((m) => m.role === "assistant")
@@ -50,12 +115,13 @@ function buildQueryPlannerPrompt(
 
 ${topicsHint}
 
-Current date/time (UTC): ${nowIso}
+${hostHint ? `${hostHint}\n\n` : ""}${hostText ? `${hostText}\n\n` : ""}Current date/time (UTC): ${nowIso}
 
 Guidelines:
 - Return 1 query if that's sufficient. Only return 2 if it genuinely adds coverage.
 - Do NOT generate near-duplicates. Each query must target a different angle (e.g. definition vs rules vs eligibility).
 - Prefer richer queries with key entities, synonyms, and constraints from the conversation.
+- If VISIBLE PAGE TEXT is present, mine it for entities, product names, headings, and numbers to improve search queries.
 - If the user did NOT specify a timeframe, assume they want the latest info and include the current year (${new Date().getUTCFullYear()}) when it helps.
 - If the user DID specify a timeframe (e.g. "in 2023", "last season"), respect it and do not force "latest".
 
@@ -72,12 +138,18 @@ Focus on: ${lastUserMsg?.content ?? ""}`;
 async function planQueries(
   messages: ChatMessage[],
   allowedTopics: string[],
-  model: string
+  model: string,
+  hostPage?: HostPageContext
 ): Promise<string[]> {
   try {
     const raw = await chatCompletion(
       model,
-      [{ role: "user", content: buildQueryPlannerPrompt(messages, allowedTopics) }],
+      [
+        {
+          role: "user",
+          content: buildQueryPlannerPrompt(messages, allowedTopics, hostPage),
+        },
+      ],
       0,
       true
     );
@@ -131,7 +203,8 @@ function isDomainGuardPassed(
 
 function buildSystemPrompt(
   site: Pick<Site, "title" | "greeting" | "allowedTopics">,
-  contextChunks: RetrievedChunk[]
+  contextChunks: RetrievedChunk[],
+  hostPage?: HostPageContext
 ): string {
   const stripMarkdown = (s: string) =>
     s
@@ -160,14 +233,18 @@ function buildSystemPrompt(
   const scopeInstruction =
     site.allowedTopics.length > 0
       ? `You ONLY answer questions about: ${site.allowedTopics.join(", ")}. For out-of-scope questions, politely explain what you can help with, and try to think about the question from the user's perspective and the website's content.`
-      : "Answer only based on the provided context. Do not use external knowledge. Try to think about the question from the user's perspective and the website's content.";
+      : "Answer based on the HOST PAGE TEXT and/or KNOWLEDGE BASE CONTEXT below. Do not use other external knowledge.";
+
+  const hostBlock = hostPageNarrative(hostPage);
+  const hostTextBlockFull = hostPageTextBlock(hostPage, HOST_PAGE_CONTENT_SYSTEM_MAX);
 
   return `You are a helpful assistant for ${site.title}.
 
 ${scopeInstruction}
 
 RULES:
-- Base your answers ONLY on the context provided below.
+- Base your answers on the HOST PAGE TEXT (if any) and the KNOWLEDGE BASE CONTEXT below. Do not invent facts beyond those sources.
+- If HOST PAGE TEXT and KNOWLEDGE BASE CONTEXT disagree on a definitive policy or number, prefer the knowledge base and briefly note the page may be outdated.
 - If the context does not contain enough information, say so honestly.
 - Do not fabricate facts, links, or information.
 - Write in plain conversational text. Do NOT use Markdown (no headings, bullet lists, bold/italic, or code fences).
@@ -177,13 +254,14 @@ RULES:
 - Keep responses concise and helpful. End with a short, friendly follow-up question when appropriate.
 - You can always use the website's content to answer the question and can also touch around to be helpful if the exact answer is not apparant.
 
-CONTEXT:
+${hostBlock ? `${hostBlock}\n\n` : ""}${hostTextBlockFull ? `${hostTextBlockFull}\n\n` : ""}KNOWLEDGE BASE CONTEXT:
 ${contextBlock}`;
 }
 
 export async function* ragStream(
   site: Site,
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  options?: { hostPage?: HostPageContext }
 ): AsyncGenerator<
   | { type: "token"; content: string }
   | { type: "sources"; sources: Source[] }
@@ -191,6 +269,7 @@ export async function* ragStream(
   | { type: "debug"; stage: string; data: Record<string, unknown> }
   | { type: "error"; message: string }
 > {
+  const hostPage = options?.hostPage;
   const liveNamespace = site.livePineconeNs?.trim() ?? "";
   const { indexName, indexHostUrl } = resolvePineconeTarget(
     site,
@@ -209,11 +288,21 @@ export async function* ragStream(
   };
 
   // 1. Plan search queries
-  const queries = await planQueries(messages, site.allowedTopics, site.modelId);
+  const queries = await planQueries(
+    messages,
+    site.allowedTopics,
+    site.modelId,
+    hostPage
+  );
   yield {
     type: "debug",
     stage: "plan_queries",
-    data: { queries, allowedTopics: site.allowedTopics, modelId: site.modelId },
+    data: {
+      queries,
+      allowedTopics: site.allowedTopics,
+      modelId: site.modelId,
+      hostPage: summarizeHostPageForLog(hostPage),
+    },
   };
 
   if (queries.length === 0) {
@@ -307,7 +396,7 @@ export async function* ragStream(
   }
 
   // 5. Build prompt
-  const systemPrompt = buildSystemPrompt(site, chunks);
+  const systemPrompt = buildSystemPrompt(site, chunks, hostPage);
   yield {
     type: "debug",
     stage: "system_prompt",
@@ -315,6 +404,7 @@ export async function* ragStream(
       systemPrompt,
       hasContext: chunks.length > 0,
       allowedTopics: site.allowedTopics,
+      hostPage: summarizeHostPageForLog(hostPage),
     },
   };
   const chatMessages = [

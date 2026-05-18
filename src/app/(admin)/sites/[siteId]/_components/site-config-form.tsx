@@ -7,6 +7,7 @@ import { useSession } from "next-auth/react";
 
 import { api } from "~/trpc/react";
 import { buildScrapeConfigFromKnowledgeFields } from "~/lib/site-scrape-form";
+import { normalizeLinkGroups, type LinkGroupFrequency } from "~/lib/link-groups";
 import { SiteConfigBrandingTab } from "./site-config-branding-tab";
 import { SiteConfigBehaviorTab } from "./site-config-behavior-tab";
 import { SiteConfigKnowledgeTab } from "./site-config-knowledge-tab";
@@ -20,6 +21,8 @@ const MODELS = [
 ];
 
 const FREE_MODEL_ID = "google/gemini-2.5-flash";
+
+const DEFAULT_GROUP_FREQUENCY: LinkGroupFrequency = "daily";
 
 export function SiteConfigForm({
   site,
@@ -88,6 +91,39 @@ export function SiteConfigForm({
     return null;
   };
 
+  const initialLinkGroups = useMemo(() => {
+    const fromConfig = normalizeLinkGroups(initialScrapeConfig.link_groups);
+    if (fromConfig.length > 0) return fromConfig;
+
+    const legacySeedUrls = Array.isArray(initialScrapeConfig.seed_urls)
+      ? (initialScrapeConfig.seed_urls as unknown[]).filter((v): v is string => typeof v === "string")
+      : site.primaryUrl
+        ? [site.primaryUrl]
+        : [];
+
+    const links = legacySeedUrls
+      .map((url) => url.trim())
+      .filter(Boolean)
+      .map((url) => ({
+        url,
+        depth: 1,
+        followExternalDomains: false,
+        pageWildcardPostfixes: [],
+      }));
+
+    if (links.length === 0) return [];
+    return [
+      {
+        id: "group-1",
+        name: "Main links",
+        frequency: DEFAULT_GROUP_FREQUENCY,
+        allowedDomains: [],
+        links,
+        lastRunAt: null,
+      },
+    ];
+  }, [initialScrapeConfig, site.primaryUrl]);
+
   const [form, setForm] = useState({
     name: site.name,
     primaryColor: site.primaryColor,
@@ -136,6 +172,7 @@ export function SiteConfigForm({
       if (w <= 7) return "speedy";
       return "fastest";
     })(),
+    linkGroups: initialLinkGroups,
   });
 
   const formRef = useRef(form);
@@ -178,6 +215,7 @@ export function SiteConfigForm({
           scrapeAllowedPrefixes: f.scrapeAllowedPrefixes,
           scrapeCoverage: f.scrapeCoverage,
           scrapeSpeed: f.scrapeSpeed,
+          linkGroups: f.linkGroups,
           plan,
         }) as never,
       });
@@ -323,6 +361,36 @@ export function SiteConfigForm({
         if (w <= 3) return "quick";
         if (w <= 7) return "speedy";
         return "fastest";
+      })(),
+      linkGroups: (() => {
+        const raw = site.scrapeConfig as Record<string, unknown> | null | undefined;
+        const groups = normalizeLinkGroups(raw?.link_groups);
+        if (groups.length > 0) return groups;
+        const fallbackSeedUrls = Array.isArray(raw?.seed_urls)
+          ? (raw?.seed_urls as unknown[]).filter((v: unknown): v is string => typeof v === "string")
+          : site.primaryUrl
+            ? [site.primaryUrl]
+            : [];
+        const links = fallbackSeedUrls
+          .map((url) => String(url).trim())
+          .filter(Boolean)
+          .map((url) => ({
+            url,
+            depth: 1,
+            followExternalDomains: false,
+            pageWildcardPostfixes: [],
+          }));
+        if (links.length === 0) return [];
+        return [
+          {
+            id: "group-1",
+            name: "Main links",
+            frequency: DEFAULT_GROUP_FREQUENCY,
+            allowedDomains: [],
+            links,
+            lastRunAt: null,
+          },
+        ];
       })(),
     });
     initialSnapshotRef.current = snapshot;
@@ -498,6 +566,7 @@ export function SiteConfigForm({
               scrapeAllowedPrefixes: form.scrapeAllowedPrefixes,
               scrapeCoverage: form.scrapeCoverage,
               scrapeSpeed: form.scrapeSpeed,
+              linkGroups: form.linkGroups,
             }}
             setForm={(next) =>
               setForm((prev) => ({

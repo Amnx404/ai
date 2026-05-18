@@ -1,3 +1,5 @@
+import { normalizeLinkGroups } from "~/lib/link-groups";
+
 /**
  * Coerce scrape-related numeric fields on Site.scrapeConfig (JSON) so values
  * round-trip as proper numbers for the scraper API (int vs float).
@@ -48,6 +50,10 @@ export function normalizeScrapeConfigObject(input: unknown): Record<string, unkn
       if (n !== null && n >= 0) out.max_depth = Math.trunc(n);
       else delete out.max_depth;
     }
+  }
+
+  if ("link_groups" in out) {
+    out.link_groups = normalizeLinkGroups(out.link_groups);
   }
 
   return out;
