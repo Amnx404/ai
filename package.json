@@ -7,6 +7,8 @@
     "build": "npm run build:widget && next build",
     "build:widget": "tsx scripts/build-widget.ts",
     "dev": "next dev",
+    "scraper:dev": "tsx scraper/server.ts",
+    "scraper:smoke": "tsx scraper/smoke-test.ts",
     "start": "next start",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
