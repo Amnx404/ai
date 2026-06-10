@@ -76,10 +76,8 @@ export const analyticsRouter = createTRPCRouter({
           createdAt: true,
           _count: { select: { messages: true } },
           messages: {
-            where: { role: "user" },
             orderBy: { createdAt: "asc" },
-            take: 1,
-            select: { content: true },
+            select: { role: true, content: true, sources: true },
           },
         },
       });
@@ -88,7 +86,27 @@ export const analyticsRouter = createTRPCRouter({
         id: r.id,
         createdAt: r.createdAt,
         messageCount: r._count.messages,
-        firstUserQuestion: r.messages[0]?.content ?? null,
+        firstUserQuestion: r.messages.find((message) => message.role === "user")?.content ?? null,
+        lastAssistantAnswer:
+          [...r.messages].reverse().find((message) => message.role === "assistant")?.content ??
+          null,
+        sourceCount: Array.from(
+          new Set(
+            r.messages.flatMap((message) => {
+              const sources = Array.isArray(message.sources) ? message.sources : [];
+              return sources
+                .map((source) =>
+                  source &&
+                  typeof source === "object" &&
+                  "url" in source &&
+                  typeof (source as { url?: unknown }).url === "string"
+                    ? (source as { url: string }).url
+                    : "",
+                )
+                .filter(Boolean);
+            }),
+          ),
+        ).length,
       }));
     }),
 

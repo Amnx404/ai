@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getServerSession } from "next-auth";
 
+import { env } from "~/env.js";
+import { getUserFacingAllowedDomains } from "~/lib/allowed-domains";
 import { authOptions } from "~/server/auth";
 import { db } from "~/server/db";
 
@@ -32,7 +34,13 @@ export async function GET(req: Request) {
 
   const site = await db.site.findFirst({
     where: { id: parsed.data.siteId, orgId },
-    select: { id: true, isActive: true, livePineconeNs: true },
+    select: {
+      id: true,
+      primaryUrl: true,
+      allowedDomains: true,
+      isActive: true,
+      livePineconeNs: true,
+    },
   });
   if (!site) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -44,8 +52,13 @@ export async function GET(req: Request) {
     where: { orgId, isActive: true },
   });
 
+  const hasWebsite = Boolean(site.primaryUrl.trim());
+  const hasAllowedDomains =
+    getUserFacingAllowedDomains(site.allowedDomains, env.NEXTAUTH_URL).length > 0;
   const hasKnowledgeBase = Boolean(site.livePineconeNs);
-  const canDeploy = site.isActive ? true : hasKnowledgeBase && activeCount < limit;
+  const canDeploy = site.isActive
+    ? true
+    : hasWebsite && hasAllowedDomains && hasKnowledgeBase && activeCount < limit;
 
   return NextResponse.json({
     ok: true,
@@ -53,17 +66,22 @@ export async function GET(req: Request) {
     plan,
     limit,
     activeCount,
+    hasWebsite,
+    hasAllowedDomains,
     hasKnowledgeBase,
     canDeploy,
     reason: canDeploy
       ? null
+      : !hasWebsite
+        ? "Set a website URL before publishing."
+      : !hasAllowedDomains
+        ? "Add at least one allowed domain before publishing."
       : !hasKnowledgeBase
-        ? "Scrape your knowledge base before deploying."
+        ? "Add knowledge before publishing."
       : plan === "FREE"
-        ? "Free tier can only have 1 active site."
+        ? "Free tier can only have 1 active widget."
         : plan === "PRO"
-          ? "Pro tier can only have 3 active sites."
-          : "Max tier can only have 10 active sites.",
+          ? "Pro tier can only have 3 active widgets."
+          : "Max tier can only have 10 active widgets.",
   });
 }
-

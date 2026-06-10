@@ -8,6 +8,7 @@ import { env } from "~/env.js";
 import { verifyWidgetToken } from "~/lib/widget-jwt";
 import { getRealIp, rateLimit } from "~/lib/rate-limit";
 import { getLangfuse, getLangfuseTraceUrl } from "~/lib/langfuse";
+import { checkOriginAllowed } from "~/lib/allowed-domains";
 
 const bodySchema = z.object({
   siteId: z.string().min(1),
@@ -49,16 +50,20 @@ export async function POST(req: NextRequest) {
 
   const { siteId, messages, sessionId, token } = parsed.data;
 
-  // Verify JWT if provided
-  if (token) {
-    try {
-      const payload = await verifyWidgetToken(token);
-      if (payload.siteId !== siteId) {
-        return sseError("Token mismatch", 403, req);
-      }
-    } catch {
-      return sseError("Invalid token", 401, req);
+  if (!token) {
+    return sseError("Widget session required", 401, req);
+  }
+
+  try {
+    const payload = await verifyWidgetToken(token);
+    if (payload.siteId !== siteId) {
+      return sseError("Token mismatch", 403, req);
     }
+    if (sessionId && payload.sessionId !== sessionId) {
+      return sseError("Session mismatch", 403, req);
+    }
+  } catch {
+    return sseError("Invalid token", 401, req);
   }
 
   const site = await db.site.findFirst({
@@ -70,6 +75,12 @@ export async function POST(req: NextRequest) {
   }
 
   const origin = req.headers.get("origin") ?? "";
+  const originGate = checkOriginAllowed(origin, site.allowedDomains, {
+    allowOpaqueOrigin: process.env.NODE_ENV === "development",
+  });
+  if (!originGate.ok) {
+    return sseError(originGate.error, originGate.status, req);
+  }
 
   const pineconeTarget = resolvePineconeTarget(site, env.PINECONE_INDEX);
   const langfuse = getLangfuse();
@@ -157,6 +168,8 @@ export async function POST(req: NextRequest) {
           const title = s.title ?? "";
           const main = title.split("|")[0]?.trim() || title.trim();
           const needle = norm(main);
+          const url = s.url?.toLowerCase() ?? "";
+          if (url && hay.includes(url)) return true;
           if (!needle) return false;
           return norm(hay).includes(needle);
         });

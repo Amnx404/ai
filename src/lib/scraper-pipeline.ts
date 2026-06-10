@@ -1,6 +1,7 @@
 import { env } from "~/env.js";
 
 export type ScrapeRequest = {
+  scrape_provider?: "firecrawl" | "cloudflare" | null;
   seed_urls: string[];
   allowed_prefixes: string[];
   respect_allowed_prefixes?: boolean;
@@ -14,8 +15,23 @@ export type ScrapeRequest = {
   parallel_workers?: number;
   retry_limit?: number;
   max_depth?: number | null;
+  skip_map?: boolean;
   url_whitelist_patterns?: string[];
   url_blacklist_patterns?: string[];
+  source_groups?: Array<Record<string, unknown>>;
+  source_group_ids?: string[];
+  source_group_mode?: "all" | "core" | "live";
+  firecrawl_scrape_options?: Record<string, unknown>;
+  firecrawl_batch_options?: Record<string, unknown>;
+  cloudflare_crawl_options?: Record<string, unknown>;
+  cloudflare_markdown_options?: Record<string, unknown>;
+  cloudflare_render?: boolean;
+  cloudflare_render_mode?: "auto" | "static" | "browser";
+  cloudflare_discovery_mode?: "crawl" | "static";
+  cloudflare_job_retries?: number;
+  cloudflare_per_seed_limit?: number | null;
+  cloudflare_stall_timeout_ms?: number | null;
+  cloudflare_crawl_purposes?: Array<"search" | "ai-input" | "ai-train">;
 };
 
 export type PrepareRequest = {
@@ -35,6 +51,7 @@ export type PrepareRequest = {
 
 export type UploadRequest = {
   run_id: string;
+  site_id?: string | null;
   ingestion_dir?: string | null;
   live_prefix: string;
   staging_namespace?: string | null;
@@ -176,4 +193,3 @@ export async function waitForRunFinished(runId: string, opts?: { timeoutMs?: num
     await new Promise((r) => setTimeout(r, 1200));
   }
 }
-

@@ -93,8 +93,8 @@ model Site {
   allowedDomains String[]
   // RAG config
   allowedTopics  String[]
-  modelId        String       @default("google/gemini-3-flash-preview")
-  temperature    Float        @default(0.9)
+  modelId        String       @default("google/gemini-2.5-flash")
+  temperature    Float        @default(0.45)
   // Points to the latest "live" namespace written by the knowledge base pipeline.
   // When set, retrieval uses this over derived namespaces.
   livePineconeNs String? @map("live_pinecone_namespace")
@@ -109,6 +109,7 @@ model Site {
   chatSessions   ChatSession[]
   analyticsEvents AnalyticsEvent[]
   kbRuns         KnowledgeBaseRun[]
+  knowledgeChunks KnowledgeChunk[]
 }
 
 model KnowledgeBaseRun {
@@ -133,6 +134,30 @@ model KnowledgeBaseRun {
   @@unique([runId, step])
   @@index([siteId, createdAt])
   @@index([runId])
+}
+
+model KnowledgeChunk {
+  id          String   @id @default(cuid())
+  siteId      String
+  site        Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  namespace   String
+  vectorId    String
+  runId       String?
+  url         String   @default("")
+  title       String?
+  description String?
+  text        String
+  source      String   @default("scraper")
+  pageIndex   Int?     @map("page_index")
+  chunkIndex  Int?     @map("chunk_index")
+  chars       Int?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([namespace, vectorId])
+  @@index([siteId, namespace])
+  @@index([siteId, namespace, url])
 }
 
 model ChatSession {

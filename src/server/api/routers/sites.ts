@@ -3,10 +3,14 @@ import { z } from "zod";
 
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
 import { env } from "~/env.js";
+import {
+  getUserFacingAllowedDomains,
+  normalizeAllowedDomains,
+} from "~/lib/allowed-domains";
 import { normalizeScrapeConfigObject } from "~/lib/scrape-config-normalize";
 
 function withAppDomain(domains: string[]) {
-  const set = new Set(domains.map((d) => d.trim()).filter(Boolean));
+  const set = new Set(normalizeAllowedDomains(domains));
   try {
     const appHost = new URL(env.NEXTAUTH_URL).host;
     if (appHost) set.add(appHost);
@@ -75,6 +79,8 @@ export const sitesRouter = createTRPCRouter({
           name: input.name,
           primaryUrl: input.primaryUrl,
           allowedDomains: withAppDomain(input.allowedDomains),
+          modelId: "google/gemini-2.5-flash",
+          temperature: 0.45,
         },
       });
     }),
@@ -111,6 +117,11 @@ export const sitesRouter = createTRPCRouter({
       });
       if (!site) throw new TRPCError({ code: "NOT_FOUND" });
 
+      const requestedAllowedDomains =
+        typeof data.allowedDomains === "undefined"
+          ? undefined
+          : withAppDomain(data.allowedDomains);
+
       // Free tier: lock model choice.
       if (typeof data.modelId === "string") {
         const plan = (user?.plan as "FREE" | "PRO" | "MAX" | undefined) ?? "FREE";
@@ -122,14 +133,29 @@ export const sitesRouter = createTRPCRouter({
         }
       }
 
-      // Enforce active-site limits when enabling a site.
+      // Enforce active-widget limits when publishing a site.
       if (data.isActive === true && site.isActive === false) {
         const plan = (user?.plan as "FREE" | "PRO" | "MAX" | undefined) ?? "FREE";
         const limit = plan === "MAX" ? 10 : plan === "PRO" ? 3 : 1;
+        const nextPrimaryUrl =
+          typeof data.primaryUrl === "string" ? data.primaryUrl : site.primaryUrl;
+        const nextAllowedDomains = requestedAllowedDomains ?? site.allowedDomains;
+        if (!nextPrimaryUrl.trim()) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Set a website URL before publishing.",
+          });
+        }
+        if (getUserFacingAllowedDomains(nextAllowedDomains, env.NEXTAUTH_URL).length === 0) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Add at least one allowed domain before publishing.",
+          });
+        }
         if (!site.livePineconeNs) {
           throw new TRPCError({
             code: "FORBIDDEN",
-            message: "Scrape your knowledge base before deploying.",
+            message: "Add knowledge before publishing.",
           });
         }
         const activeCount = await ctx.db.site.count({
@@ -140,15 +166,16 @@ export const sitesRouter = createTRPCRouter({
             code: "FORBIDDEN",
             message:
               plan === "FREE"
-                ? "Free tier can only have 1 active site."
+                ? "Free tier can only have 1 active widget."
                 : plan === "PRO"
-                  ? "Pro tier can only have 3 active sites."
-                  : "Max tier can only have 10 active sites.",
+                  ? "Pro tier can only have 3 active widgets."
+                  : "Max tier can only have 10 active widgets.",
           });
         }
       }
 
-      const { scrapeConfig, ...rest } = data;
+      const { scrapeConfig, allowedDomains: ignoredAllowedDomains, ...rest } = data;
+      void ignoredAllowedDomains;
       const normalizedScrapeConfig =
         typeof scrapeConfig === "undefined"
           ? undefined
@@ -159,9 +186,9 @@ export const sitesRouter = createTRPCRouter({
         where: { id },
         data: {
           ...rest,
-          ...(typeof rest.allowedDomains === "undefined"
+          ...(typeof requestedAllowedDomains === "undefined"
             ? {}
-            : { allowedDomains: withAppDomain(rest.allowedDomains) }),
+            : { allowedDomains: requestedAllowedDomains }),
           ...(typeof scrapeConfig === "undefined"
             ? {}
             : scrapeConfig === null

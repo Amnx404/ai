@@ -1,0 +1,25 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "RAILPACK",
+    "watchPatterns": [
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "prisma/**",
+      "scraper/**",
+      "src/env.js",
+      "src/lib/pinecone*.ts",
+      "src/server/db.ts",
+      "railway.scraper.json"
+    ],
+    "buildCommand": "export SKIP_ENV_VALIDATION=1 && npm run db:generate && npm run build:scraper"
+  },
+  "deploy": {
+    "startCommand": "SCRAPER_HOST=0.0.0.0 SCRAPER_PORT=$PORT npm run scraper:start",
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 120,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3
+  }
+}

@@ -7,7 +7,7 @@ export const env = createEnv({
     NEXTAUTH_SECRET: z.string().min(1),
     NEXTAUTH_URL: z.string().url(),
     RESEND_API_KEY: z.string().min(1).optional(),
-    /** e.g. `RoboRacer <noreply@yourdomain.com>` — must be a domain verified in Resend */
+    /** e.g. `Support <noreply@yourdomain.com>` — must be a domain verified in Resend */
     RESEND_FROM: z.string().min(1).optional(),
     LANGFUSE_SECRET_KEY: z.string().min(1).optional(),
     LANGFUSE_PUBLIC_KEY: z.string().min(1).optional(),
@@ -21,8 +21,12 @@ export const env = createEnv({
     PINECONE_INDEX_HOST: z.string().url().optional(),
     // Optional: Pinecone Inference embedding model id (must match index dimension).
     PINECONE_EMBED_MODEL: z.string().min(1).optional(),
+    // Optional: Pinecone Inference reranking model id.
+    PINECONE_RERANK_MODEL: z.string().min(1).optional(),
     // Internal scraper pipeline service (FastAPI) base URL.
     SCRAPER_PIPELINE_BASE_URL: z.string().url().optional(),
+    // Acquisition provider used by the scraper pipeline when a site has no explicit provider.
+    SCRAPER_SCRAPE_PROVIDER: z.enum(["firecrawl", "cloudflare"]).optional(),
     // Public base URL that the scraper pipeline can POST callbacks to.
     // Example: https://app.yourdomain.com
     callback_URL: z.string().url().optional(),
@@ -49,7 +53,9 @@ export const env = createEnv({
     PINECONE_INDEX: process.env.PINECONE_INDEX,
     PINECONE_INDEX_HOST: process.env.PINECONE_INDEX_HOST,
     PINECONE_EMBED_MODEL: process.env.PINECONE_EMBED_MODEL,
+    PINECONE_RERANK_MODEL: process.env.PINECONE_RERANK_MODEL,
     SCRAPER_PIPELINE_BASE_URL: process.env.SCRAPER_PIPELINE_BASE_URL,
+    SCRAPER_SCRAPE_PROVIDER: process.env.SCRAPER_SCRAPE_PROVIDER,
     callback_URL: process.env.callback_URL,
     SCRAPER_FINETUNE_MODEL: process.env.SCRAPER_FINETUNE_MODEL,
     FINETUNE_PROMPT: process.env.FINETUNE_PROMPT,

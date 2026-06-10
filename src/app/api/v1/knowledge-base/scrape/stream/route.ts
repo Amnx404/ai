@@ -7,6 +7,7 @@ import { authOptions } from "~/server/auth";
 import { db } from "~/server/db";
 import { env } from "~/env.js";
 import { normalizeScrapeConfigObject } from "~/lib/scrape-config-normalize";
+import { resolveScrapeConfigSourceGroups } from "~/lib/scrape-source-groups";
 
 const bodySchema = z.object({
   siteId: z.string().min(1),
@@ -49,7 +50,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Site not found" }, { status: 404 });
   }
 
-  const scrapePayload = normalizeScrapeConfigObject(parsed.data.scrape) as Record<string, unknown>;
+  const scrapePayload = resolveScrapeConfigSourceGroups(
+    normalizeScrapeConfigObject(parsed.data.scrape),
+  ) as Record<string, unknown>;
 
   // Persist scrapeConfig for the site (so it's visible/editable in UI)
   await db.site.update({
@@ -94,4 +97,3 @@ export async function OPTIONS() {
     },
   });
 }
-

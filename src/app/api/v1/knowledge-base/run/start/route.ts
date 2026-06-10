@@ -13,12 +13,15 @@ import {
   type PipelineRunRequest,
 } from "~/lib/scraper-pipeline";
 import { normalizeScrapeConfigObject } from "~/lib/scrape-config-normalize";
+import { resolveScrapeConfigSourceGroups } from "~/lib/scrape-source-groups";
 
 const bodySchema = z.object({
   siteId: z.string().min(1),
   // Optional debugging overrides for upload
   livePrefix: z.string().min(1).optional(),
   maxRecords: z.number().int().min(0).optional(),
+  sourceGroupMode: z.enum(["all", "core", "live"]).optional(),
+  sourceGroupIds: z.array(z.string().min(1)).optional(),
 });
 
 function jsonNoStore(data: unknown, status = 200) {
@@ -97,8 +100,35 @@ export async function POST(req: NextRequest) {
     ((site as unknown as { livePineconePrefix?: string | null }).livePineconePrefix ??
       `${site.id}-live-v-`);
 
-  const scrapeConfig = normalizeScrapeConfigObject(site.scrapeConfig ?? {});
+  const rawScrapeConfig = normalizeScrapeConfigObject(site.scrapeConfig ?? {});
+  if (parsed.data.sourceGroupMode) rawScrapeConfig.source_group_mode = parsed.data.sourceGroupMode;
+  if (parsed.data.sourceGroupIds?.length) rawScrapeConfig.source_group_ids = parsed.data.sourceGroupIds;
+  const scrapeConfig = resolveScrapeConfigSourceGroups(rawScrapeConfig);
+  const stringArray = (value: unknown) =>
+    Array.isArray(value)
+      ? value.filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+      : [];
+  const objectRecord = (value: unknown): Record<string, unknown> | undefined =>
+    value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+  const cloudflareCrawlPurposes = stringArray(scrapeConfig.cloudflare_crawl_purposes).filter(
+    (value): value is "search" | "ai-input" | "ai-train" =>
+      value === "search" || value === "ai-input" || value === "ai-train",
+  );
+  const cloudflareRenderMode: "auto" | "static" | "browser" | undefined =
+    scrapeConfig.cloudflare_render_mode === "auto" ||
+    scrapeConfig.cloudflare_render_mode === "static" ||
+    scrapeConfig.cloudflare_render_mode === "browser"
+      ? scrapeConfig.cloudflare_render_mode
+      : undefined;
+  const cloudflareDiscoveryMode: "crawl" | "static" | undefined =
+    scrapeConfig.cloudflare_discovery_mode === "crawl" || scrapeConfig.cloudflare_discovery_mode === "static"
+      ? scrapeConfig.cloudflare_discovery_mode
+      : undefined;
   const scrape = {
+    scrape_provider:
+      scrapeConfig.scrape_provider === "cloudflare" || scrapeConfig.scrape_provider === "firecrawl"
+        ? scrapeConfig.scrape_provider
+        : env.SCRAPER_SCRAPE_PROVIDER ?? "cloudflare",
     seed_urls: Array.isArray(scrapeConfig.seed_urls)
       ? (scrapeConfig.seed_urls as unknown[]).filter((v): v is string => typeof v === "string")
       : site.primaryUrl
@@ -110,9 +140,37 @@ export async function POST(req: NextRequest) {
     max_pages: typeof scrapeConfig.max_pages === "number" ? scrapeConfig.max_pages : 10,
     delay: typeof scrapeConfig.delay === "number" ? scrapeConfig.delay : 0.5,
     parallel_workers: typeof scrapeConfig.parallel_workers === "number" ? scrapeConfig.parallel_workers : 4,
+    max_depth: typeof scrapeConfig.max_depth === "number" ? scrapeConfig.max_depth : 1,
+    skip_map: scrapeConfig.skip_map === true,
+    url_whitelist_patterns: stringArray(scrapeConfig.url_whitelist_patterns),
+    url_blacklist_patterns: stringArray(scrapeConfig.url_blacklist_patterns),
     use_selenium:
       typeof scrapeConfig.use_selenium === "boolean" ? Boolean(scrapeConfig.use_selenium) : true,
     respect_allowed_prefixes: true,
+    cloudflare_render:
+      typeof scrapeConfig.cloudflare_render === "boolean"
+        ? scrapeConfig.cloudflare_render
+        : undefined,
+    cloudflare_render_mode: cloudflareRenderMode,
+    cloudflare_discovery_mode: cloudflareDiscoveryMode,
+    cloudflare_job_retries:
+      typeof scrapeConfig.cloudflare_job_retries === "number"
+        ? scrapeConfig.cloudflare_job_retries
+        : undefined,
+    cloudflare_per_seed_limit:
+      typeof scrapeConfig.cloudflare_per_seed_limit === "number"
+        ? scrapeConfig.cloudflare_per_seed_limit
+        : undefined,
+    cloudflare_stall_timeout_ms:
+      typeof scrapeConfig.cloudflare_stall_timeout_ms === "number"
+        ? scrapeConfig.cloudflare_stall_timeout_ms
+        : undefined,
+    cloudflare_crawl_options: objectRecord(scrapeConfig.cloudflare_crawl_options),
+    cloudflare_markdown_options: objectRecord(scrapeConfig.cloudflare_markdown_options),
+    cloudflare_crawl_purposes:
+      cloudflareCrawlPurposes.length > 0
+        ? cloudflareCrawlPurposes
+        : (["search", "ai-input"] as Array<"search" | "ai-input">),
   };
 
   const callbackBase = env.callback_URL ?? env.NEXTAUTH_URL;
@@ -125,7 +183,7 @@ export async function POST(req: NextRequest) {
     scrape,
     prepare: {
       run_id: clientRequestId,
-      finetune: true,
+      finetune: scrapeConfig.finetune === true,
       finetune_model: env.SCRAPER_FINETUNE_MODEL ?? null,
       finetune_prompt: env.FINETUNE_PROMPT ?? "",
       min_chars: 80,
@@ -134,6 +192,7 @@ export async function POST(req: NextRequest) {
     },
     upload: {
       run_id: clientRequestId,
+      site_id: site.id,
       live_prefix: livePrefix,
       text_source: "fine",
       vector_dim: 1024,
@@ -183,4 +242,3 @@ export async function OPTIONS() {
     },
   });
 }
-

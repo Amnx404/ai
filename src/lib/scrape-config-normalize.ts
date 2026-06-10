@@ -1,3 +1,5 @@
+import { normalizeSourceGroups } from "~/lib/scrape-source-groups";
+
 /**
  * Coerce scrape-related numeric fields on Site.scrapeConfig (JSON) so values
  * round-trip as proper numbers for the scraper API (int vs float).
@@ -20,6 +22,24 @@ export function normalizeScrapeConfigObject(input: unknown): Record<string, unkn
     const n = toFiniteNumber(out.max_pages);
     if (n !== null && n >= 1) out.max_pages = Math.trunc(n);
     else delete out.max_pages;
+  }
+
+  if ("cloudflare_per_seed_limit" in out) {
+    const n = toFiniteNumber(out.cloudflare_per_seed_limit);
+    if (n !== null && n >= 1) out.cloudflare_per_seed_limit = Math.trunc(n);
+    else delete out.cloudflare_per_seed_limit;
+  }
+
+  if ("cloudflare_job_retries" in out) {
+    const n = toFiniteNumber(out.cloudflare_job_retries);
+    if (n !== null && n >= 0) out.cloudflare_job_retries = Math.trunc(n);
+    else delete out.cloudflare_job_retries;
+  }
+
+  if ("cloudflare_stall_timeout_ms" in out) {
+    const n = toFiniteNumber(out.cloudflare_stall_timeout_ms);
+    if (n !== null && n >= 0) out.cloudflare_stall_timeout_ms = Math.trunc(n);
+    else delete out.cloudflare_stall_timeout_ms;
   }
 
   if ("delay" in out) {
@@ -48,6 +68,64 @@ export function normalizeScrapeConfigObject(input: unknown): Record<string, unkn
       if (n !== null && n >= 0) out.max_depth = Math.trunc(n);
       else delete out.max_depth;
     }
+  }
+
+  if ("scrape_provider" in out) {
+    const value = typeof out.scrape_provider === "string" ? out.scrape_provider.trim().toLowerCase() : "";
+    if (value === "firecrawl" || value === "cloudflare") out.scrape_provider = value;
+    else delete out.scrape_provider;
+  }
+
+  if ("cloudflare_render_mode" in out) {
+    const value = typeof out.cloudflare_render_mode === "string" ? out.cloudflare_render_mode.trim().toLowerCase() : "";
+    if (value === "auto" || value === "static" || value === "browser") out.cloudflare_render_mode = value;
+    else delete out.cloudflare_render_mode;
+  }
+
+  if ("cloudflare_discovery_mode" in out) {
+    const value =
+      typeof out.cloudflare_discovery_mode === "string"
+        ? out.cloudflare_discovery_mode.trim().toLowerCase()
+        : "";
+    if (value === "crawl" || value === "static") out.cloudflare_discovery_mode = value;
+    else delete out.cloudflare_discovery_mode;
+  }
+
+  if ("source_groups" in out) {
+    const groups = normalizeSourceGroups(out.source_groups);
+    if (groups.length > 0) out.source_groups = groups;
+    else delete out.source_groups;
+  }
+
+  if ("source_group_ids" in out) {
+    if (Array.isArray(out.source_group_ids)) {
+      const ids = out.source_group_ids.filter(
+        (item): item is string => typeof item === "string" && item.trim().length > 0,
+      );
+      if (ids.length > 0) out.source_group_ids = ids;
+      else delete out.source_group_ids;
+    } else {
+      delete out.source_group_ids;
+    }
+  }
+
+  if ("source_group_mode" in out) {
+    const value = typeof out.source_group_mode === "string" ? out.source_group_mode.trim().toLowerCase() : "";
+    if (value === "all" || value === "core" || value === "live") out.source_group_mode = value;
+    else delete out.source_group_mode;
+  }
+
+  for (const key of ["skip_map", "finetune", "respect_allowed_prefixes", "use_selenium", "cloudflare_render"]) {
+    if (!(key in out)) continue;
+    if (typeof out[key] === "boolean") continue;
+    if (typeof out[key] === "string") {
+      const normalized = out[key].trim().toLowerCase();
+      if (normalized === "true") out[key] = true;
+      else if (normalized === "false") out[key] = false;
+      else delete out[key];
+      continue;
+    }
+    delete out[key];
   }
 
   return out;

@@ -18,7 +18,7 @@ export function SiteAnalytics({
       {stats.map((s) => (
         <div
           key={s.label}
-          className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm"
+          className="rounded-lg border border-gray-200 bg-white p-5 shadow-sm"
         >
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
             {s.label}

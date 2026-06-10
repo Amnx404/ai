@@ -38,6 +38,48 @@ function getResendClient() {
 const magicLinkFrom =
   env.RESEND_FROM ?? "Alt Ego Team <onboarding@altegolabs.com>";
 
+function orgNameFromEmail(email: string | null | undefined) {
+  const localPart = email?.split("@")[0]?.trim();
+  if (!localPart) return "My Org";
+  return localPart
+    .replace(/[._-]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word[0]?.toUpperCase() + word.slice(1))
+    .join(" ")
+    .slice(0, 80) || "My Org";
+}
+
+type SessionDbUser = {
+  id: string;
+  orgId: string | null;
+  plan: "FREE" | "PRO" | "MAX";
+};
+
+async function ensureUserOrganization(userId: string) {
+  return db.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({
+      where: { id: userId },
+      select: { orgId: true, email: true },
+    });
+    if (!user) return null;
+    if (user.orgId) return user.orgId;
+
+    const org = await tx.organization.create({
+      data: { name: orgNameFromEmail(user.email) },
+      select: { id: true },
+    });
+
+    const updated = await tx.user.update({
+      where: { id: userId },
+      data: { orgId: org.id },
+      select: { orgId: true },
+    });
+
+    return updated.orgId;
+  });
+}
+
 export const authOptions: NextAuthOptions = {
   // Database sessions are opaque tokens; `next-auth/middleware` uses `getToken()` which
   // only decrypts JWT cookies — so middleware always saw "logged out". JWT strategy
@@ -54,15 +96,29 @@ export const authOptions: NextAuthOptions = {
       }
       // Keep plan/orgId in sync with Postgres (so tier changes take effect immediately).
       if (typeof token.id === "string" || typeof token.sub === "string") {
-        const userId = (typeof token.id === "string" ? token.id : token.sub) as string;
         try {
-          const dbUser = await db.user.findUnique({
+          let userId = (typeof token.id === "string" ? token.id : token.sub) as string;
+          let dbUser = (await db.user.findUnique({
             where: { id: userId },
             // Prisma types can be stale across migrations in dev.
-            select: { plan: true, orgId: true } as any,
-          });
+            select: { id: true, plan: true, orgId: true } as any,
+          }) as unknown) as SessionDbUser | null;
+
+          if (!dbUser && typeof token.email === "string" && token.email.includes("@")) {
+            dbUser = (await db.user.upsert({
+              where: { email: token.email },
+              update: {},
+              create: { email: token.email, emailVerified: new Date() },
+              select: { id: true, plan: true, orgId: true } as any,
+            }) as unknown) as SessionDbUser;
+            userId = dbUser.id;
+            token.id = userId;
+            token.sub = userId;
+          }
+
+          const orgId = dbUser ? await ensureUserOrganization(userId) : null;
           token.plan = (dbUser?.plan as "FREE" | "PRO" | "MAX" | undefined) ?? "FREE";
-          token.orgId = (dbUser?.orgId as string | null | undefined) ?? token.orgId ?? null;
+          token.orgId = (dbUser?.orgId as string | null | undefined) ?? orgId ?? token.orgId ?? null;
         } catch {
           token.plan = (token.plan ?? "FREE") as "FREE" | "PRO" | "MAX";
         }
@@ -84,7 +140,6 @@ export const authOptions: NextAuthOptions = {
     EmailProvider({
       from: magicLinkFrom,
       sendVerificationRequest: async ({ identifier, url }) => {
-        const resend = getResendClient();
         const html = `
             <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
               <h2>Sign in to Alt Ego Labs</h2>
@@ -98,6 +153,14 @@ export const authOptions: NextAuthOptions = {
             </div>
           `;
 
+        if (env.NODE_ENV === "development") {
+          console.log(
+            `\n[DEV] Magic link for ${identifier}. Paste this URL in the browser to sign in:\n${url}\n`,
+          );
+          return;
+        }
+
+        const resend = getResendClient();
         if (resend) {
           const { error } = await resend.emails.send({
             from: magicLinkFrom,
@@ -116,18 +179,6 @@ export const authOptions: NextAuthOptions = {
                 : "Resend could not send the email (check API key and domain).";
             throw new Error(msg);
           }
-          if (env.NODE_ENV === "development") {
-            console.log(
-              `\n[DEV] Magic link email sent via Resend to ${identifier}. (Link for debugging:)\n${url}\n`,
-            );
-          }
-          return;
-        }
-
-        if (env.NODE_ENV === "development") {
-          console.log(
-            `\n[DEV] RESEND_API_KEY is not set — no email is sent locally. Paste this URL in the browser to sign in:\n${url}\n`,
-          );
           return;
         }
 
@@ -140,6 +191,7 @@ export const authOptions: NextAuthOptions = {
   pages: {
     signIn: "/auth/signin",
     verifyRequest: "/auth/verify",
+    error: "/auth/signin",
   },
 };
 

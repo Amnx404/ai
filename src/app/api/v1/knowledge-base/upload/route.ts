@@ -87,6 +87,7 @@ export async function POST(req: NextRequest) {
     try {
       status = await scraperUpload({
         run_id: parsed.data.runId,
+        site_id: site.id,
         live_prefix: livePrefix,
         vector_dim: 1024,
         text_source: "fine",
@@ -216,4 +217,3 @@ export async function POST(req: NextRequest) {
     );
   }
 }
-
