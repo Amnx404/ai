@@ -16,10 +16,23 @@
   </head>
   <body>
     <h1>Chat widget demo</h1>
-    <p>Dummy page. The widget loads from the script below.</p>
+    <p>
+      Demo page. Add a widget id in the URL, for example
+      <code>?siteId=your-site-id</code>.
+    </p>
+    <p id="demo-status"></p>
     <script>
-      window.ChatWidget = { siteId: "cmo7xs6bi0005or8omiw0yzte" };
+      const params = new URLSearchParams(window.location.search);
+      const siteId = params.get("siteId");
+      const status = document.getElementById("demo-status");
+
+      if (siteId) {
+        window.ChatWidget = { siteId };
+        status.textContent = `Loading widget ${siteId}.`;
+      } else {
+        status.textContent = "No widget id provided. The launcher will stay hidden.";
+      }
     </script>
-    <script async src="http://localhost:3000/widget.js"></script>
+    <script async src="/widget.js"></script>
   </body>
 </html>

@@ -54,7 +54,7 @@ export function LinkifiedText({
           href={url}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-indigo-600 underline hover:text-indigo-800"
+          className="text-blue-700 underline hover:text-blue-900"
         >
           {label}
         </a>
@@ -75,7 +75,7 @@ export function LinkifiedText({
           href={url}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-indigo-600 underline hover:text-indigo-800"
+          className="text-blue-700 underline hover:text-blue-900"
         >
           {label}
         </a>
@@ -91,7 +91,7 @@ export function LinkifiedText({
         href={raw}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-indigo-600 underline hover:text-indigo-800"
+        className="text-blue-700 underline hover:text-blue-900"
       >
         {raw}
       </a>
@@ -123,7 +123,7 @@ export function LinkifiedText({
                 href={s.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-indigo-600 underline hover:text-indigo-800 font-semibold"
+                className="font-semibold text-blue-700 underline hover:text-blue-900"
               >
                 {c}
               </a>

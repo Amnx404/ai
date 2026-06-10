@@ -21,6 +21,12 @@ export interface RetrievedChunk {
   metadata: Record<string, unknown>;
 }
 
+export type RerankResult = {
+  chunks: RetrievedChunk[];
+  model: string;
+  usage?: unknown;
+};
+
 export async function queryPinecone({
   indexName,
   namespace,
@@ -53,8 +59,63 @@ export async function queryPinecone({
       text: String(m.metadata?.text ?? m.metadata?.content ?? ""),
       title: m.metadata?.title ? String(m.metadata.title) : undefined,
       url: m.metadata?.url ? String(m.metadata.url) : undefined,
-      metadata: (m.metadata as Record<string, unknown>) ?? {},
+      metadata: {
+        ...((m.metadata as Record<string, unknown>) ?? {}),
+        retrieval_methods: ["dense"],
+        dense_score: m.score ?? 0,
+      },
     }));
+}
+
+export async function rerankChunks({
+  query,
+  chunks,
+  topN,
+  model = env.PINECONE_RERANK_MODEL ?? "bge-reranker-v2-m3",
+}: {
+  query: string;
+  chunks: RetrievedChunk[];
+  topN: number;
+  model?: string;
+}): Promise<RerankResult> {
+  if (!query.trim() || chunks.length === 0) {
+    return { chunks: chunks.slice(0, topN), model };
+  }
+
+  const pinecone = getPinecone();
+  const documents = chunks.map((chunk) => ({
+    title: chunk.title ?? "",
+    url: chunk.url ?? "",
+    text: chunk.text.slice(0, 6_000),
+  }));
+
+  const result = await pinecone.inference.rerank(model, query, documents, {
+    topN,
+    returnDocuments: false,
+    rankFields: ["text"],
+    parameters: { truncate: "END" },
+  });
+
+  const rankedChunks: RetrievedChunk[] = [];
+  for (const ranked of result.data) {
+    const original = chunks[ranked.index];
+    if (!original) continue;
+    rankedChunks.push({
+      ...original,
+      score: ranked.score,
+      metadata: {
+        ...original.metadata,
+        rerank_score: ranked.score,
+        rerank_model: result.model,
+      },
+    });
+  }
+
+  return {
+    chunks: rankedChunks,
+    model: result.model,
+    usage: result.usage,
+  };
 }
 
 export async function upsertChunks(

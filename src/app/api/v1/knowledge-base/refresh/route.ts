@@ -15,6 +15,7 @@ import { resolvePineconeTarget } from "~/lib/pinecone";
 import { getServerSession } from "next-auth";
 import { authOptions } from "~/server/auth";
 import { normalizeScrapeConfigObject } from "~/lib/scrape-config-normalize";
+import { resolveScrapeConfigSourceGroups } from "~/lib/scrape-source-groups";
 
 const bodySchema = z.object({
   siteId: z.string().min(1),
@@ -97,8 +98,10 @@ export async function POST(req: NextRequest) {
     // ignore
   }
 
-  const persistedConfig = normalizeScrapeConfigObject(
-    site.scrapeConfig && typeof site.scrapeConfig === "object" ? site.scrapeConfig : {},
+  const persistedConfig = resolveScrapeConfigSourceGroups(
+    normalizeScrapeConfigObject(
+      site.scrapeConfig && typeof site.scrapeConfig === "object" ? site.scrapeConfig : {},
+    ),
   );
 
   const seed_urls =
@@ -133,12 +136,12 @@ export async function POST(req: NextRequest) {
 
   // 1) Scrape
   const scrapeOverrides = normalizeScrapeConfigObject(scrape ?? {});
-  const scrapeReq = {
-    seed_urls,
-    allowed_prefixes,
+  const scrapeReq = resolveScrapeConfigSourceGroups({
     ...persistedConfig,
     ...scrapeOverrides,
-  } as Record<string, unknown>;
+    seed_urls,
+    allowed_prefixes,
+  } as Record<string, unknown>);
 
   const scraped = await scraperScrape(scrapeReq as never);
 
@@ -203,6 +206,7 @@ export async function POST(req: NextRequest) {
     ).livePineconePrefix?.trim() || `${siteId}-live-v-`;
   const uploaded = await scraperUpload({
     run_id: scraped.run_id,
+    site_id: siteId,
     live_prefix: livePrefix,
     text_source: "fine",
     embed_model: env.PINECONE_EMBED_MODEL ?? "llama-text-embed-v2",
@@ -305,4 +309,3 @@ export async function POST(req: NextRequest) {
     effectivePineconeTarget: effectiveTarget,
   });
 }
-

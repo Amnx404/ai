@@ -2,6 +2,7 @@ import { getStyles } from "./styles";
 
 interface WidgetConfig {
   id: string;
+  isActive?: boolean;
   primaryColor: string;
   title: string;
   greeting: string;
@@ -9,6 +10,12 @@ interface WidgetConfig {
   logoUrl?: string | null;
   allowedTopics: string[];
   appUrl?: string;
+  preview?: boolean;
+  readiness?: {
+    hasWebsite?: boolean;
+    hasAllowedDomains?: boolean;
+    hasKnowledgeBase?: boolean;
+  };
 }
 
 interface Message {
@@ -22,6 +29,7 @@ interface ChatWidgetGlobal {
   siteId: string;
   apiBase?: string;
   pageIconUrl?: string;
+  preview?: boolean;
 }
 
 declare global {
@@ -61,6 +69,66 @@ function shortSourceLabel(title: string): string {
   const parts = t.split("|").map((p) => p.trim()).filter(Boolean);
   const base = (parts[0] ?? t) || "Source";
   return base.length > 32 ? `${base.slice(0, 29)}…` : base;
+}
+
+function sourceFallbackLabel(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname.replace(/\/$/, "");
+    const page = path.split("/").filter(Boolean).pop();
+    return page
+      ? `${parsed.hostname.replace(/^www\./, "")}/${page}`
+      : parsed.hostname.replace(/^www\./, "");
+  } catch {
+    return "Source";
+  }
+}
+
+function uniqueSources(
+  sources: Array<{ title: string; url: string; score: number }> | undefined
+): Array<{ title: string; url: string; score: number }> {
+  const seen = new Set<string>();
+  const unique: Array<{ title: string; url: string; score: number }> = [];
+  for (const source of sources ?? []) {
+    const url = source?.url?.trim();
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    unique.push(source);
+  }
+  return unique.slice(0, 5);
+}
+
+function renderSourceList(
+  sources: Array<{ title: string; url: string; score: number }> | undefined
+): string {
+  const items = uniqueSources(sources);
+  if (!items.length) return "";
+
+  return `
+    <div class="source-list" aria-label="Pages cited">
+      <div class="source-list-title">Pages cited</div>
+      <div class="source-list-links">
+        ${items
+          .map((source) => {
+            const label = source.title?.trim()
+              ? shortSourceLabel(source.title)
+              : sourceFallbackLabel(source.url);
+            return `<a class="source-chip" href="${escapeHtml(source.url)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`;
+          })
+          .join("")}
+      </div>
+    </div>
+  `;
+}
+
+function launcherLabel(title: string | undefined): string {
+  const cleanTitle = (title ?? "").trim().replace(/\s+/g, " ");
+  if (!cleanTitle) return "Ask";
+  return cleanTitle.length > 18 ? "Ask" : `Ask ${cleanTitle}`;
+}
+
+function cleanPromptTopic(topic: string): string {
+  return topic.trim().replace(/\s+/g, " ").replace(/[?.!]+$/g, "");
 }
 
 function escapeRegExp(str: string) {
@@ -164,33 +232,35 @@ export class ChatWidget {
   private messages: Message[] = [];
   private siteId: string;
   private baseUrl: string;
+  private previewMode: boolean;
   private sessionId: string | null = null;
   private token: string | null = null;
+  private sessionError: string | null = null;
   private isOpen = false;
   private isStreaming = false;
 
   constructor(siteId: string) {
     this.siteId = siteId;
     this.baseUrl = getBaseUrl(siteId);
+    this.previewMode = window.ChatWidget?.preview === true;
 
     this.host = document.createElement("div");
     this.host.id = "rr-chat-widget";
     this.host.style.cssText = "position:fixed;z-index:999999;";
     document.body.appendChild(this.host);
 
-    this.shadow = this.host.attachShadow({ mode: "closed" });
+    this.shadow = this.host.attachShadow({ mode: "open" });
     void this.init();
   }
 
   private async init() {
     try {
-      const res = await fetch(`${this.baseUrl}/api/v1/widget-config?siteId=${this.siteId}`);
+      const params = new URLSearchParams({ siteId: this.siteId });
+      if (this.previewMode) params.set("preview", "1");
+      const res = await fetch(`${this.baseUrl}/api/v1/widget-config?${params.toString()}`);
       if (!res.ok) {
-        // If the site is disabled/deleted, the config endpoint returns 404.
-        // In that case, do not mount the widget UI at all.
-        if (res.status === 404) {
-          this.host.remove();
-        }
+        // Disabled, deleted, or disallowed embeds should leave no visible UI.
+        this.host.remove();
         return;
       }
       this.config = (await res.json()) as WidgetConfig;
@@ -201,6 +271,7 @@ export class ChatWidget {
         title: "Alt",
         greeting: "Hi! How can I help you today?",
         allowedTopics: [],
+        preview: this.previewMode,
       };
     }
 
@@ -208,7 +279,9 @@ export class ChatWidget {
     if (!this.host.isConnected) return;
 
     // Restore session
-    const savedSession = sessionStorage.getItem(`${SESSION_KEY}:${this.siteId}`);
+    const savedSession =
+      sessionStorage.getItem(this.storageKey(SESSION_KEY)) ??
+      (!this.previewMode ? sessionStorage.getItem(`${SESSION_KEY}:${this.siteId}`) : null);
     if (savedSession) {
       try {
         const { sessionId, token } = JSON.parse(savedSession) as { sessionId: string; token: string };
@@ -217,7 +290,9 @@ export class ChatWidget {
       } catch { /* ignore */ }
     }
 
-    const savedMessages = sessionStorage.getItem(`${MESSAGES_KEY}:${this.siteId}`);
+    const savedMessages =
+      sessionStorage.getItem(this.storageKey(MESSAGES_KEY)) ??
+      (!this.previewMode ? sessionStorage.getItem(`${MESSAGES_KEY}:${this.siteId}`) : null);
     if (savedMessages) {
       try {
         this.messages = JSON.parse(savedMessages) as Message[];
@@ -228,15 +303,53 @@ export class ChatWidget {
     this.attachListeners();
   }
 
+  private storageKey(base: string) {
+    return `${base}:${this.siteId}:${this.previewMode ? "preview" : "live"}`;
+  }
+
+  private isPreviewOnly() {
+    return this.config?.preview === true && this.config.isActive === false;
+  }
+
+  private previewBlockedCopy() {
+    const readiness = this.config?.readiness;
+    if (!readiness?.hasWebsite) {
+      return {
+        label: "Website needed",
+        body: "Set the website URL in setup before this widget can be published.",
+        placeholder: "Set website URL to test answers",
+      };
+    }
+    if (!readiness?.hasAllowedDomains) {
+      return {
+        label: "Allowed domains needed",
+        body: "Add the website domain in setup before this widget can be published.",
+        placeholder: "Add allowed domain to test answers",
+      };
+    }
+    if (!readiness?.hasKnowledgeBase) {
+      return {
+        label: "Knowledge needed",
+        body: "Add knowledge in setup before this widget can answer questions.",
+        placeholder: "Add knowledge to test answers",
+      };
+    }
+    return {
+      label: "Draft preview",
+      body: "The widget is ready. Publish it from setup to enable live answer testing.",
+      placeholder: "Publish widget to test answers",
+    };
+  }
+
   private saveSession() {
     if (this.sessionId && this.token) {
       sessionStorage.setItem(
-        `${SESSION_KEY}:${this.siteId}`,
+        this.storageKey(SESSION_KEY),
         JSON.stringify({ sessionId: this.sessionId, token: this.token })
       );
     }
     sessionStorage.setItem(
-      `${MESSAGES_KEY}:${this.siteId}`,
+      this.storageKey(MESSAGES_KEY),
       JSON.stringify(this.messages)
     );
   }
@@ -245,35 +358,44 @@ export class ChatWidget {
     const color = this.config?.primaryColor ?? "#6366f1";
     const launcherIcon =
       this.config?.logoUrl ?? window.ChatWidget?.pageIconUrl ?? null;
+    const title = this.config?.title ?? "Alt";
+    const isPreviewOnly = this.isPreviewOnly();
+    const previewBlockedCopy = this.previewBlockedCopy();
+    const statusText = isPreviewOnly ? "Preview only" : this.config?.preview ? "Preview" : "Online";
+    const launcherText = isPreviewOnly ? "Preview widget" : launcherLabel(title);
+    const nudgeText = isPreviewOnly ? "Preview widget" : "Ask a question";
+    const inputPlaceholder = isPreviewOnly
+      ? previewBlockedCopy.placeholder
+      : "Ask a question";
     this.shadow.innerHTML = `
       <style>${getStyles(color)}</style>
 
       <div id="nudge">
-        <div class="nudge-text">Got questions? Chat with me! <span class="wave">👋</span></div>
+        <div class="nudge-text">${escapeHtml(nudgeText)}</div>
         <button id="close-nudge" aria-label="Close nudge">&times;</button>
       </div>
 
       <button id="launcher" aria-label="Open chat" title="Open chat">
-        ${
-          launcherIcon
-            ? `<img class="launcher-logo" alt="" src="${escapeHtml(launcherIcon)}" onerror="this.remove()" />`
-            : ""
-        }
-        <svg class="icon-chat" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-          <path d="M11.053 2.524a1 1 0 0 1 1.894 0l2.06 6.513a1 1 0 0 0 .629.629l6.513 2.06a1 1 0 0 1 0 1.894l-6.513 2.06a1 1 0 0 0-.629.629l-2.06 6.513a1 1 0 0 1-1.894 0l-2.06-6.513a1 1 0 0 0-.629-.629l-6.513-2.06a1 1 0 0 1 0-1.894l6.513-2.06a1 1 0 0 0 .629-.629l2.06-6.513z"/>
-          <path d="M19.553 1.524a.5.5 0 0 1 .894 0l.76 2.413a.5.5 0 0 0 .329.329l2.413.76a.5.5 0 0 1 0 .894l-2.413.76a.5.5 0 0 0-.329.329l-.76 2.413a.5.5 0 0 1-.894 0l-.76-2.413a.5.5 0 0 0-.329-.329l-2.413-.76a.5.5 0 0 1 0-.894l2.413-.76a.5.5 0 0 0 .329-.329l.76-2.413z"/>
-        </svg>
+        <span class="launcher-face">
+          ${
+            launcherIcon
+              ? `<img class="launcher-logo" alt="" src="${escapeHtml(launcherIcon)}" onerror="this.remove()" />`
+              : `<svg class="icon-chat" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/>
+                </svg>`
+          }
+        </span>
+        <span class="launcher-text">${escapeHtml(launcherText)}</span>
         <svg class="icon-close" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
           <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
         </svg>
       </button>
 
       <div id="panel" role="dialog" aria-label="Chat window">
-        <button id="resize-grip" aria-label="Resize chat window" title="Resize"></button>
         <div id="header">
           <div id="header-avatar">
             <svg class="header-default-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
+              <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/>
             </svg>
             ${
               this.config?.logoUrl
@@ -282,18 +404,18 @@ export class ChatWidget {
             }
           </div>
           <div id="header-info">
-            <div id="header-title">${escapeHtml(this.config?.title ?? "Alt")}</div>
+            <div id="header-title">${escapeHtml(title)}</div>
             <div id="header-status">
-              <span id="status-dot"></span>
-              <span>Online</span>
+              <span id="status-dot" class="${isPreviewOnly ? "muted" : ""}"></span>
+              <span>${statusText}</span>
             </div>
           </div>
-        <button id="reset-btn" aria-label="Reset chat" title="Reset chat">
-          <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-            <polyline points="21 3 21 9 15 9" />
-          </svg>
-        </button>
+          <button id="reset-btn" aria-label="Reset chat" title="Reset chat">
+            <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+              <polyline points="21 3 21 9 15 9" />
+            </svg>
+          </button>
           <button id="close-btn" aria-label="Close chat">
             <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="18" y1="6" x2="6" y2="18"/>
@@ -302,19 +424,27 @@ export class ChatWidget {
           </button>
         </div>
 
+        ${
+          isPreviewOnly
+            ? `<div id="mode-banner"><strong>${escapeHtml(previewBlockedCopy.label)}</strong><span> ${escapeHtml(previewBlockedCopy.body)}</span></div>`
+            : ""
+        }
+
         <div id="messages" aria-live="polite" aria-atomic="false">
           ${this.renderGreeting()}
+          ${this.renderStarterPrompts()}
           ${this.messages.map((m) => this.renderMessage(m)).join("")}
         </div>
 
         <div id="input-area">
           <textarea
             id="input"
-            placeholder="Ask a question…"
+            placeholder="${escapeHtml(inputPlaceholder)}"
             rows="1"
             aria-label="Message input"
+            ${isPreviewOnly ? "disabled" : ""}
           ></textarea>
-          <button id="send-btn" aria-label="Send message">
+          <button id="send-btn" aria-label="Send message" ${isPreviewOnly ? "disabled" : ""}>
             <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="22" y1="2" x2="11" y2="13"/>
               <polygon points="22 2 15 22 11 13 2 9 22 2"/>
@@ -336,6 +466,44 @@ export class ChatWidget {
     return `<div id="greeting">${escapeHtml(this.config.greeting)}</div>`;
   }
 
+  private starterPrompts(): string[] {
+    const topicPrompts = (this.config?.allowedTopics ?? [])
+      .map(cleanPromptTopic)
+      .filter(Boolean)
+      .slice(0, 3)
+      .map((topic) => `What should I know about ${topic}?`);
+    const fallback = [
+      "What can you help me with?",
+      "What are the most important details?",
+      "Where should I get started?",
+    ];
+
+    return Array.from(new Set([...topicPrompts, ...fallback])).slice(0, 3);
+  }
+
+  private renderStarterPrompts(): string {
+    if (this.messages.length > 0 || this.isPreviewOnly()) return "";
+    const prompts = this.starterPrompts();
+    if (!prompts.length) return "";
+
+    return `
+      <div id="starter-prompts" aria-label="Suggested questions">
+        <div class="starter-title">Try asking</div>
+        <div class="starter-list">
+          ${prompts
+            .map(
+              (prompt) => `
+                <button type="button" class="starter-prompt" data-starter-prompt="${escapeHtml(prompt)}">
+                  ${escapeHtml(prompt)}
+                </button>
+              `,
+            )
+            .join("")}
+        </div>
+      </div>
+    `;
+  }
+
   private renderMessage(msg: Message): string {
     return `
       <div class="message ${msg.role}">
@@ -344,6 +512,7 @@ export class ChatWidget {
             ? linkSourcesInText(msg.content, msg.sources)
             : escapeHtml(msg.content)
         }</div>
+        ${msg.role === "assistant" ? renderSourceList(msg.sources) : ""}
         <div class="message-time">${formatTime(msg.ts)}</div>
       </div>
     `;
@@ -367,7 +536,14 @@ export class ChatWidget {
     const el = document.createElement("div");
     el.className = "message assistant";
     el.id = "typing-indicator";
-    el.innerHTML = `<div class="typing"><span></span><span></span><span></span></div>`;
+    el.innerHTML = `
+      <div class="typing-wrap">
+        <div class="typing" aria-label="Assistant is checking knowledge">
+          <span></span><span></span><span></span>
+        </div>
+        <div class="typing-label">Checking knowledge</div>
+      </div>
+    `;
     this.shadow.getElementById("messages")?.appendChild(el);
     this.scrollToBottom();
     return el;
@@ -382,12 +558,11 @@ export class ChatWidget {
     const launcher = this.shadow.getElementById("launcher")!;
     const resetBtn = this.shadow.getElementById("reset-btn") as HTMLButtonElement | null;
     const closeBtn = this.shadow.getElementById("close-btn")!;
-    const panel = this.shadow.getElementById("panel") as HTMLElement;
-    const grip = this.shadow.getElementById("resize-grip") as HTMLButtonElement | null;
     const input = this.shadow.getElementById("input") as HTMLTextAreaElement;
     const sendBtn = this.shadow.getElementById("send-btn") as HTMLButtonElement;
     const nudge = this.shadow.getElementById("nudge");
     const closeNudgeBtn = this.shadow.getElementById("close-nudge");
+    const messagesEl = this.shadow.getElementById("messages");
 
     // Show nudge after a short delay if chat wasn't opened
     setTimeout(() => {
@@ -421,42 +596,18 @@ export class ChatWidget {
       input.style.height = `${Math.min(input.scrollHeight, 120)}px`;
     });
 
+    messagesEl?.addEventListener("click", (e) => {
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      const promptButton = target?.closest<HTMLButtonElement>("[data-starter-prompt]");
+      if (!promptButton || this.isPreviewOnly()) return;
+      const prompt = promptButton.getAttribute("data-starter-prompt") ?? "";
+      if (!prompt.trim()) return;
+      input.value = prompt;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.focus();
+    });
+
     sendBtn.addEventListener("click", () => void this.sendMessage());
-
-    // Custom resize from top-left (instead of native bottom-right handle)
-    if (grip) {
-      grip.addEventListener("pointerdown", (e) => {
-        e.preventDefault();
-        grip.setPointerCapture(e.pointerId);
-
-        const startW = panel.getBoundingClientRect().width;
-        const startH = panel.getBoundingClientRect().height;
-        const startX = e.clientX;
-        const startY = e.clientY;
-
-        const minW = 340;
-        const minH = 460;
-        const maxW = Math.min(window.innerWidth - 32, 720);
-        const maxH = Math.min(window.innerHeight - 120, 900);
-
-        const onMove = (ev: PointerEvent) => {
-          const dx = ev.clientX - startX;
-          const dy = ev.clientY - startY;
-          const nextW = Math.max(minW, Math.min(maxW, startW - dx));
-          const nextH = Math.max(minH, Math.min(maxH, startH - dy));
-          panel.style.width = `${Math.round(nextW)}px`;
-          panel.style.height = `${Math.round(nextH)}px`;
-        };
-
-        const onUp = () => {
-          window.removeEventListener("pointermove", onMove);
-          window.removeEventListener("pointerup", onUp);
-        };
-
-        window.addEventListener("pointermove", onMove);
-        window.addEventListener("pointerup", onUp, { once: true });
-      });
-    }
   }
 
   private toggle() {
@@ -465,23 +616,32 @@ export class ChatWidget {
 
   private open() {
     this.isOpen = true;
-    this.shadow.getElementById("launcher")?.classList.add("open");
+    const launcher = this.shadow.getElementById("launcher");
+    launcher?.classList.add("open");
+    launcher?.setAttribute("aria-label", "Close chat");
+    launcher?.setAttribute("title", "Close chat");
     this.shadow.getElementById("panel")?.classList.add("open");
-    setTimeout(() => {
-      (this.shadow.getElementById("input") as HTMLTextAreaElement | null)?.focus();
-    }, 250);
+    if (!this.isPreviewOnly()) {
+      setTimeout(() => {
+        (this.shadow.getElementById("input") as HTMLTextAreaElement | null)?.focus();
+      }, 250);
+    }
     this.scrollToBottom();
   }
 
   private close() {
     this.isOpen = false;
-    this.shadow.getElementById("launcher")?.classList.remove("open");
+    const launcher = this.shadow.getElementById("launcher");
+    launcher?.classList.remove("open");
+    launcher?.setAttribute("aria-label", "Open chat");
+    launcher?.setAttribute("title", "Open chat");
     this.shadow.getElementById("panel")?.classList.remove("open");
   }
 
   private async ensureSession() {
     if (this.sessionId && this.token) return;
 
+    this.sessionError = null;
     try {
       const res = await fetch(`${this.baseUrl}/api/v1/session`, {
         method: "POST",
@@ -493,12 +653,18 @@ export class ChatWidget {
         this.sessionId = data.sessionId;
         this.token = data.token;
         this.saveSession();
+        return;
       }
-    } catch { /* continue without session */ }
+      const data = (await res.json().catch(() => null)) as { error?: string } | null;
+      this.sessionError = data?.error ?? "Widget session could not be created.";
+    } catch {
+      this.sessionError = "Widget session could not be created.";
+    }
   }
 
   private async sendMessage() {
     if (this.isStreaming) return;
+    if (this.isPreviewOnly()) return;
 
     const input = this.shadow.getElementById("input") as HTMLTextAreaElement;
     const sendBtn = this.shadow.getElementById("send-btn") as HTMLButtonElement;
@@ -510,6 +676,7 @@ export class ChatWidget {
 
     // Remove greeting card
     this.shadow.getElementById("greeting")?.remove();
+    this.shadow.getElementById("starter-prompts")?.remove();
 
     // Add user message
     const userMsg: Message = { role: "user", content: text, ts: Date.now() };
@@ -531,6 +698,10 @@ export class ChatWidget {
     let bubbleEl: HTMLElement | null = null;
 
     try {
+      if (!this.sessionId || !this.token) {
+        throw new Error(this.sessionError ?? "Widget session could not be created.");
+      }
+
       const res = await fetch(`${this.baseUrl}/api/v1/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -548,7 +719,9 @@ export class ChatWidget {
       });
 
       if (!res.ok || !res.body) {
-        throw new Error("Network error");
+        const body = await res.text().catch(() => "");
+        const match = body.match(/"message"\s*:\s*"([^"]+)"/) ?? body.match(/"error"\s*:\s*"([^"]+)"/);
+        throw new Error(match?.[1] ?? "Chat request failed.");
       }
 
       const reader = res.body.getReader();
@@ -592,13 +765,21 @@ export class ChatWidget {
               this.scrollToBottom();
             } else if (event.type === "sources" && event.sources) {
               assistantMsg.sources = event.sources;
+            } else if (event.type === "error") {
+              assistantContent =
+                event.message?.trim() || "Sorry, something went wrong. Please try again.";
+              bubbleEl!.textContent = assistantContent;
+              this.scrollToBottom();
             }
           } catch { /* malformed event */ }
         }
       }
     } catch (err) {
       typingEl.remove();
-      assistantContent = "Sorry, I couldn't connect. Please try again.";
+      const message = err instanceof Error ? err.message : "";
+      assistantContent = /domain not allowed|origin header|required|session/i.test(message)
+        ? "This widget is not enabled for this domain yet. Update the allowed domains in setup, then try again."
+        : "Sorry, I couldn't connect. Please try again.";
       if (!assistantEl) {
         assistantEl = document.createElement("div");
         assistantEl.className = "message assistant";
@@ -616,6 +797,14 @@ export class ChatWidget {
             assistantContent,
             assistantMsg.sources
           );
+        }
+
+        const sourceHtml = renderSourceList(assistantMsg.sources);
+        if (sourceHtml) {
+          const sourceWrap = document.createElement("div");
+          sourceWrap.innerHTML = sourceHtml.trim();
+          const sourceEl = sourceWrap.firstElementChild;
+          if (sourceEl) assistantEl.appendChild(sourceEl);
         }
 
         const timeEl = document.createElement("div");
@@ -644,13 +833,15 @@ export class ChatWidget {
     this.token = null;
 
     // Clear persisted state
+    sessionStorage.removeItem(this.storageKey(SESSION_KEY));
+    sessionStorage.removeItem(this.storageKey(MESSAGES_KEY));
     sessionStorage.removeItem(`${SESSION_KEY}:${this.siteId}`);
     sessionStorage.removeItem(`${MESSAGES_KEY}:${this.siteId}`);
 
     // Reset UI
     const messagesEl = this.shadow.getElementById("messages");
     if (messagesEl) {
-      messagesEl.innerHTML = `${this.renderGreeting()}`;
+      messagesEl.innerHTML = `${this.renderGreeting()}${this.renderStarterPrompts()}`;
     }
     this.scrollToBottom();
   }

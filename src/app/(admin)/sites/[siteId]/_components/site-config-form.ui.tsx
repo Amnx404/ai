@@ -1,28 +1,54 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import {
+  cloneElement,
+  isValidElement,
+  useId,
+  useMemo,
+  useState,
+  type ReactElement,
+} from "react";
 
 export const inputCls =
-  "w-full rounded-xl border border-gray-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100";
+  "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-900/10";
+
+const labelableTags = new Set(["input", "select", "textarea"]);
 
 export function Field({
   label,
   hint,
   children,
   className = "",
+  controlId,
 }: {
   label: string;
   hint?: string;
   children: React.ReactNode;
   className?: string;
+  controlId?: string;
 }) {
+  const generatedId = useId();
+  let labelFor = controlId;
+  let content = children;
+
+  if (
+    !controlId &&
+    isValidElement(children) &&
+    typeof children.type === "string" &&
+    labelableTags.has(children.type)
+  ) {
+    const child = children as ReactElement<{ id?: string }>;
+    labelFor = child.props.id ?? `field-${generatedId}`;
+    content = cloneElement(child, { id: labelFor });
+  }
+
   return (
     <div className={className}>
-      <label className="mb-1 block text-sm font-medium text-gray-700">
+      <label htmlFor={labelFor} className="mb-1 block text-sm font-medium text-gray-700">
         {label}
       </label>
       {hint && <p className="mb-1 text-xs text-gray-400">{hint}</p>}
-      {children}
+      {content}
     </div>
   );
 }
@@ -87,6 +113,7 @@ export function UrlListInput({
   placeholder,
   normalize,
   onPersist,
+  inputId,
 }: {
   value: string;
   onChange: (next: string) => void;
@@ -94,6 +121,7 @@ export function UrlListInput({
   normalize: (raw: string) => string;
   /** Called after the list changes or when the draft field loses focus (e.g. site-wide blur save). */
   onPersist?: () => void;
+  inputId?: string;
 }) {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string>("");
@@ -108,7 +136,12 @@ export function UrlListInput({
   const shouldScroll = items.length > 3;
 
   const extractAllNormalized = (raw: string) => {
-    const s = raw.trim();
+    const s = raw
+      .trim()
+      // Some browsers/testing paths collapse newlines inside <input> values. Keep
+      // pasted URL lists separable even when two URLs become adjacent.
+      .replace(/(https?:\/\/)/gi, " $1")
+      .trim();
     if (!s) return [];
     const matches = s.match(/https?:\/\/[^\s"'<>]+/gi) ?? [];
     const candidates =
@@ -132,8 +165,8 @@ export function UrlListInput({
     for (const n of normalized) {
       try {
         const u = new URL(n);
-        if (u.protocol !== "https:") {
-          setError("Must be an https URL.");
+        if (u.protocol !== "https:" && u.protocol !== "http:") {
+          setError("Must be an http or https URL.");
           return;
         }
       } catch {
@@ -156,9 +189,10 @@ export function UrlListInput({
   };
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-2">
+    <div className="rounded-lg border border-gray-200 bg-white p-2">
       <div className="flex gap-2">
         <input
+          id={inputId}
           value={draft}
           onChange={(e) => {
             setDraft(e.target.value);
@@ -183,7 +217,7 @@ export function UrlListInput({
         <button
           type="button"
           onClick={() => commit(draft)}
-          className="shrink-0 rounded-xl bg-gray-900 px-3 py-2 text-xs font-semibold text-white hover:bg-gray-800"
+          className="shrink-0 rounded-lg bg-gray-900 px-3 py-2 text-xs font-semibold text-white hover:bg-gray-800"
         >
           Add
         </button>
@@ -208,7 +242,7 @@ export function UrlListInput({
               <button
                 type="button"
                 onClick={() => remove(idx)}
-                className="rounded-lg px-2 py-1 text-xs font-semibold text-gray-600 hover:bg-white hover:text-gray-900"
+                className="min-h-8 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-gray-600 hover:bg-white hover:text-gray-900"
                 aria-label={`Remove ${u}`}
               >
                 Remove
@@ -222,4 +256,3 @@ export function UrlListInput({
     </div>
   );
 }
-

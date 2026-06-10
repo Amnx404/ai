@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db } from "~/server/db";
 import { signWidgetToken } from "~/lib/widget-jwt";
 import { getRealIp, rateLimit } from "~/lib/rate-limit";
+import { checkOriginAllowed } from "~/lib/allowed-domains";
 
 const bodySchema = z.object({
   siteId: z.string().min(1),
@@ -34,32 +35,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Site not found" }, { status: 404 });
   }
 
-  // Domain allowlist check (needs a real Origin — missing on file://, curl, etc.)
-  if (site.allowedDomains.length > 0) {
-    const opaqueOrigin = origin === "" || origin === "null";
-    if (opaqueOrigin) {
-      if (process.env.NODE_ENV !== "development") {
-        return NextResponse.json(
-          { error: "Origin header required for this site" },
-          { status: 400 },
-        );
-      }
-    } else {
-      const originUrl = origin.startsWith("http") ? origin : `https://${origin}`;
-      let originHost: string;
-      try {
-        originHost = new URL(originUrl).hostname;
-      } catch {
-        return NextResponse.json({ error: "Invalid Origin" }, { status: 400 });
-      }
-      const allowed = site.allowedDomains.some((d) => {
-        const domain = d.replace(/^https?:\/\//, "").split("/")[0];
-        return originHost === domain || originHost.endsWith(`.${domain}`);
-      });
-      if (!allowed && process.env.NODE_ENV !== "development") {
-        return NextResponse.json({ error: "Domain not allowed" }, { status: 403 });
-      }
-    }
+  const originGate = checkOriginAllowed(origin, site.allowedDomains, {
+    allowOpaqueOrigin: process.env.NODE_ENV === "development",
+  });
+  if (!originGate.ok) {
+    return NextResponse.json(
+      { error: originGate.error },
+      {
+        status: originGate.status,
+        headers: { "Access-Control-Allow-Origin": originGate.corsOrigin },
+      },
+    );
   }
 
   const session = await db.chatSession.create({
@@ -72,8 +58,7 @@ export async function POST(req: NextRequest) {
     data: { siteId: site.id, type: "chat_start" },
   });
 
-  const allowOrigin =
-    origin && origin !== "null" ? origin : "*";
+  const allowOrigin = originGate.corsOrigin;
   const corsHeaders: Record<string, string> = {
     "Access-Control-Allow-Origin": allowOrigin,
   };

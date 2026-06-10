@@ -1,13 +1,29 @@
 {
-  "$schema": "https://railway.app/railway.schema.json",
+  "$schema": "https://railway.com/railway.schema.json",
   "build": {
     "builder": "RAILPACK",
-    "buildCommand": "export SKIP_ENV_VALIDATION=1 && npm install && npm run db:generate && npm run build"
+    "watchPatterns": [
+      "package.json",
+      "package-lock.json",
+      "next.config.js",
+      "postcss.config.cjs",
+      "tailwind.config.ts",
+      "tsconfig.json",
+      "prisma/**",
+      "public/**",
+      "scripts/**",
+      "src/**",
+      "railway.json"
+    ],
+    "buildCommand": "export SKIP_ENV_VALIDATION=1 && npm run db:generate && npm run build"
   },
   "deploy": {
-    "startCommand": "npx prisma migrate deploy && npm start",
+    "preDeployCommand": [
+      "npx prisma migrate deploy"
+    ],
+    "startCommand": "npm start",
     "healthcheckPath": "/api/v1/health",
-    "healthcheckTimeout": 60,
+    "healthcheckTimeout": 120,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 3
   }

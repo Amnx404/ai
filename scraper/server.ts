@@ -1,8 +1,15 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 
+import { CloudflareApiError } from "./cloudflare-client.js";
 import { FirecrawlApiError } from "./firecrawl-client.js";
-import { runFirecrawlScrape } from "./scrape.js";
-import type { ScrapeRequest } from "./types.js";
+import { loadDotEnv } from "./load-env.js";
+import { enqueuePipelineRun, getPipelineRunStatus, stopPipelineRun } from "./pipeline.js";
+import { runPrepare } from "./prepare.js";
+import { runScrape } from "./scrape.js";
+import { runUpload } from "./upload.js";
+import type { PipelineRunRequest, PrepareRequest, ScrapeRequest, UploadRequest } from "./types.js";
+
+loadDotEnv();
 
 const port = Number(process.env.SCRAPER_PORT ?? 8787);
 const host = process.env.SCRAPER_HOST ?? "0.0.0.0";
@@ -19,7 +26,7 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`[firecrawl-scraper] listening on http://${host}:${port}`);
+  console.log(`[scraper] listening on http://${host}:${port}`);
 });
 
 async function route(req: IncomingMessage, res: ServerResponse) {
@@ -34,14 +41,47 @@ async function route(req: IncomingMessage, res: ServerResponse) {
   }
 
   if (method === "GET" && pathname === "/health") {
-    sendJson(res, 200, { ok: true, service: "firecrawl-scraper" });
+    sendJson(res, 200, { ok: true, service: "scraper" });
     return;
   }
 
   if (method === "POST" && pathname === "/scrape") {
     const body = (await readJson(req)) as ScrapeRequest;
-    const status = await runFirecrawlScrape(body);
+    const status = await runScrape(body);
     sendJson(res, 200, status);
+    return;
+  }
+
+  if (method === "POST" && pathname === "/prepare") {
+    const body = (await readJson(req)) as PrepareRequest;
+    const status = await runPrepare(body);
+    sendJson(res, 200, status);
+    return;
+  }
+
+  if (method === "POST" && pathname === "/upload") {
+    const body = (await readJson(req)) as UploadRequest;
+    const status = await runUpload(body);
+    sendJson(res, 200, status);
+    return;
+  }
+
+  if (method === "POST" && pathname === "/runs") {
+    const body = (await readJson(req)) as PipelineRunRequest;
+    sendJson(res, 200, enqueuePipelineRun(body));
+    return;
+  }
+
+  const runStatusMatch = pathname.match(/^\/runs\/([^/]+)$/);
+  if (method === "GET" && runStatusMatch?.[1]) {
+    sendJson(res, 200, getPipelineRunStatus(decodeURIComponent(runStatusMatch[1])));
+    return;
+  }
+
+  const runStopMatch = pathname.match(/^\/runs\/([^/]+)\/stop$/);
+  if (method === "POST" && runStopMatch?.[1]) {
+    await readJson(req);
+    sendJson(res, 200, stopPipelineRun(decodeURIComponent(runStopMatch[1])));
     return;
   }
 
@@ -61,7 +101,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     };
 
     try {
-      const status = await runFirecrawlScrape(body, {
+      const status = await runScrape(body, {
         onProgress: (event) => writeEvent(event.event, event),
       });
       writeEvent("result", status);
@@ -111,6 +151,11 @@ function writeCorsHeaders(res: ServerResponse) {
 }
 
 function statusFromError(error: unknown) {
+  if (error && typeof error === "object" && "status" in error) {
+    const status = Number((error as { status?: unknown }).status);
+    if (Number.isInteger(status) && status >= 400 && status <= 599) return status;
+  }
   if (error instanceof FirecrawlApiError && error.status) return error.status >= 500 ? 502 : error.status;
+  if (error instanceof CloudflareApiError && error.status) return error.status >= 500 ? 502 : error.status;
   return 500;
 }

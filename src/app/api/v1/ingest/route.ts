@@ -4,6 +4,7 @@ import { getServerSession } from "next-auth";
 
 import { authOptions } from "~/server/auth";
 import { db } from "~/server/db";
+import { replaceKnowledgeChunks } from "~/lib/knowledge-chunks";
 import { embedTextsForIngest } from "~/lib/pinecone-embed";
 import { resolvePineconeTarget, upsertChunksToHost } from "~/lib/pinecone";
 import { env } from "~/env.js";
@@ -78,5 +79,21 @@ export async function POST(req: NextRequest) {
     upserted += batch.length;
   }
 
-  return NextResponse.json({ upserted, namespace });
+  const stored = await replaceKnowledgeChunks({
+    siteId,
+    namespace,
+    chunks: chunks.map((c) => ({
+      vectorId: c.id,
+      text: c.text,
+      title: c.title ?? null,
+      url: c.url ?? "",
+      source: "manual",
+      metadata: {
+        ...((c.metadata ?? {}) as Record<string, string | number | boolean>),
+        source: "manual",
+      },
+    })),
+  });
+
+  return NextResponse.json({ upserted, namespace, stored: stored.stored });
 }

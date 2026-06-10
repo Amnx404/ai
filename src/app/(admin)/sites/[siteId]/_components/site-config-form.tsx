@@ -1,11 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { type Site } from "@prisma/client";
-import { useSession } from "next-auth/react";
+import {
+  AlertCircle,
+  BookOpenText,
+  Check,
+  CheckCircle2,
+  Loader2,
+  Palette,
+  Save,
+  ShieldCheck,
+} from "lucide-react";
 
 import { api } from "~/trpc/react";
+import { getUserFacingAllowedDomains } from "~/lib/allowed-domains";
 import { buildScrapeConfigFromKnowledgeFields } from "~/lib/site-scrape-form";
 import { SiteConfigBrandingTab } from "./site-config-branding-tab";
 import { SiteConfigBehaviorTab } from "./site-config-behavior-tab";
@@ -25,17 +35,21 @@ export function SiteConfigForm({
   site,
   defaultPineconeIndex: _defaultPineconeIndex,
   defaultPineconeIndexHost: _defaultPineconeIndexHost,
+  internalAppHost,
   initialTab,
+  plan,
 }: {
   site: Site;
   defaultPineconeIndex: string;
   defaultPineconeIndexHost: string;
+  internalAppHost: string;
   initialTab?: "branding" | "behavior" | "knowledge";
+  plan: "FREE" | "PRO" | "MAX";
 }) {
   const router = useRouter();
-  const { data: session } = useSession();
-  const plan = ((session?.user as any)?.plan ?? "FREE") as "FREE" | "PRO" | "MAX";
-  const normalizeHttps = (raw: string) => {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const normalizeHttps = useCallback((raw: string) => {
     const s = raw.trim();
     if (!s) return "";
 
@@ -51,14 +65,21 @@ export function SiteConfigForm({
     if (/^https:\/\//i.test(candidate)) return candidate;
     if (/^http:\/\//i.test(candidate)) return candidate.replace(/^http:\/\//i, "https://");
     return `https://${candidate}`;
-  };
+  }, []);
+
+  const normalizeSourceUrl = useCallback((raw: string) => {
+    const s = raw.trim();
+    if (!s) return "";
+
+    const m = s.match(/https?:\/\/[^\s"'<>]+/i);
+    const candidate = (m?.[0] ?? s).replace(/[),.;]+$/g, "");
+
+    if (/^https?:\/\//i.test(candidate)) return candidate;
+    return `https://${candidate}`;
+  }, []);
 
   const stripImplicitDomains = (domains: string[]) =>
-    domains.filter((d) => {
-      const s = String(d ?? "").trim();
-      if (!s) return false;
-      return !/^(localhost(:\d+)?|127\.0\.0\.1(:\d+)?)$/i.test(s);
-    });
+    getUserFacingAllowedDomains(domains, internalAppHost);
 
   const baseOrigin = (raw: string) => {
     try {
@@ -72,6 +93,10 @@ export function SiteConfigForm({
   const [tab, setTab] = useState<"branding" | "behavior" | "knowledge">(
     initialTab ?? "branding"
   );
+
+  useEffect(() => {
+    setTab(initialTab ?? "branding");
+  }, [initialTab]);
 
   const initialScrapeConfig = useMemo(() => {
     const raw = site.scrapeConfig;
@@ -88,6 +113,13 @@ export function SiteConfigForm({
     return null;
   };
 
+  const persistedStringList = (v: unknown): string =>
+    Array.isArray(v)
+      ? v
+          .filter((item): item is string => typeof item === "string")
+          .join("\n")
+      : "";
+
   const [form, setForm] = useState({
     name: site.name,
     primaryColor: site.primaryColor,
@@ -99,12 +131,6 @@ export function SiteConfigForm({
     allowedTopics: site.allowedTopics.join(", "),
     modelId: site.modelId,
     temperature: site.temperature,
-    livePineconePrefix:
-      (
-        site as unknown as {
-          livePineconePrefix?: string | null;
-        }
-      ).livePineconePrefix ?? `${site.id}-live-v-`,
     scrapeSeedUrls: Array.isArray(initialScrapeConfig.seed_urls)
       ? (initialScrapeConfig.seed_urls as unknown[])
           .filter((v): v is string => typeof v === "string")
@@ -136,6 +162,36 @@ export function SiteConfigForm({
       if (w <= 7) return "speedy";
       return "fastest";
     })(),
+    scrapeMaxDepth: (() => {
+      const depth = persistedInt(initialScrapeConfig.max_depth);
+      return depth === null ? "2" : String(depth);
+    })(),
+    scrapeProvider:
+      initialScrapeConfig.scrape_provider === "firecrawl" ? "firecrawl" : "cloudflare",
+    scrapeCloudflareRenderMode:
+      initialScrapeConfig.cloudflare_render_mode === "static" ||
+      initialScrapeConfig.cloudflare_render_mode === "browser"
+        ? initialScrapeConfig.cloudflare_render_mode
+        : "auto",
+    scrapeCloudflareDiscoveryMode:
+      initialScrapeConfig.cloudflare_discovery_mode === "static" ? "static" : "crawl",
+    scrapeCloudflarePerSeedLimit: (() => {
+      const limit = persistedInt(initialScrapeConfig.cloudflare_per_seed_limit);
+      return limit === null ? "" : String(limit);
+    })(),
+    scrapeSourceGroupsJson: Array.isArray(initialScrapeConfig.source_groups)
+      ? JSON.stringify(initialScrapeConfig.source_groups, null, 2)
+      : "",
+    scrapeSkipMap:
+      typeof initialScrapeConfig.skip_map === "boolean"
+        ? initialScrapeConfig.skip_map
+        : false,
+    scrapeFinetune:
+      typeof initialScrapeConfig.finetune === "boolean"
+        ? initialScrapeConfig.finetune
+        : false,
+    scrapeUrlWhitelistPatterns: persistedStringList(initialScrapeConfig.url_whitelist_patterns),
+    scrapeUrlBlacklistPatterns: persistedStringList(initialScrapeConfig.url_blacklist_patterns),
   });
 
   const formRef = useRef(form);
@@ -143,18 +199,61 @@ export function SiteConfigForm({
 
   const initialSnapshotRef = useRef<string>("");
   const lastDirtyRef = useRef<boolean>(false);
+  const [isDirty, setIsDirty] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+
+  const formSnapshot = useCallback(
+    (f: typeof form) =>
+      JSON.stringify({
+        name: f.name,
+        primaryColor: f.primaryColor,
+        title: f.title,
+        greeting: f.greeting,
+        primaryUrl: f.primaryUrl,
+        logoUrl: f.logoUrl,
+        allowedDomains: f.allowedDomains,
+        allowedTopics: f.allowedTopics,
+        modelId: f.modelId,
+        temperature: f.temperature,
+        scrapeSeedUrls: f.scrapeSeedUrls,
+        scrapeAllowedPrefixes: f.scrapeAllowedPrefixes,
+        scrapeCoverage: f.scrapeCoverage,
+        scrapeSpeed: f.scrapeSpeed,
+        scrapeMaxDepth: f.scrapeMaxDepth,
+        scrapeProvider: f.scrapeProvider,
+        scrapeCloudflareRenderMode: f.scrapeCloudflareRenderMode,
+        scrapeCloudflareDiscoveryMode: f.scrapeCloudflareDiscoveryMode,
+        scrapeCloudflarePerSeedLimit: f.scrapeCloudflarePerSeedLimit,
+        scrapeSourceGroupsJson: f.scrapeSourceGroupsJson,
+        scrapeSkipMap: f.scrapeSkipMap,
+        scrapeFinetune: f.scrapeFinetune,
+        scrapeUrlWhitelistPatterns: f.scrapeUrlWhitelistPatterns,
+        scrapeUrlBlacklistPatterns: f.scrapeUrlBlacklistPatterns,
+      }),
+    [],
+  );
+
+  const markClean = useCallback(
+    (draft?: typeof form) => {
+      initialSnapshotRef.current = formSnapshot(draft ?? formRef.current);
+      lastDirtyRef.current = false;
+      setIsDirty(false);
+      setLastSavedAt(new Date());
+      window.dispatchEvent(new CustomEvent("site:dirty", { detail: { dirty: false } }));
+    },
+    [formSnapshot],
+  );
 
   const updateSite = api.sites.update.useMutation({
     onSuccess: () => {
-      window.dispatchEvent(new CustomEvent("site:dirty", { detail: { dirty: false } }));
-      lastDirtyRef.current = false;
+      markClean();
       router.refresh();
     },
   });
 
-  const persistSite = useCallback(() => {
+  const persistSite = useCallback((draft?: typeof form) => {
     window.requestAnimationFrame(() => {
-      const f = formRef.current;
+      const f = draft ?? formRef.current;
       updateSite.mutate({
         id: site.id,
         name: f.name,
@@ -175,9 +274,19 @@ export function SiteConfigForm({
         temperature: f.temperature,
         scrapeConfig: buildScrapeConfigFromKnowledgeFields({
           scrapeSeedUrls: f.scrapeSeedUrls,
+          scrapeProvider: f.scrapeProvider as "firecrawl" | "cloudflare",
+          scrapeCloudflareRenderMode: f.scrapeCloudflareRenderMode as "auto" | "static" | "browser",
+          scrapeCloudflareDiscoveryMode: f.scrapeCloudflareDiscoveryMode as "crawl" | "static",
+          scrapeCloudflarePerSeedLimit: f.scrapeCloudflarePerSeedLimit,
+          scrapeSourceGroupsJson: f.scrapeSourceGroupsJson,
           scrapeAllowedPrefixes: f.scrapeAllowedPrefixes,
           scrapeCoverage: f.scrapeCoverage,
           scrapeSpeed: f.scrapeSpeed,
+          scrapeMaxDepth: f.scrapeMaxDepth,
+          scrapeSkipMap: f.scrapeSkipMap,
+          scrapeFinetune: f.scrapeFinetune,
+          scrapeUrlWhitelistPatterns: f.scrapeUrlWhitelistPatterns,
+          scrapeUrlBlacklistPatterns: f.scrapeUrlBlacklistPatterns,
           plan,
         }) as never,
       });
@@ -212,12 +321,12 @@ export function SiteConfigForm({
 
   useEffect(() => {
     // Only prefill defaults if the site hasn't set any explicit domains yet.
-    if (site.allowedDomains.length > 0) return;
+    if (stripImplicitDomains(site.allowedDomains).length > 0) return;
     if (form.allowedDomains.trim().length > 0) return;
     const suggested = computeSuggestedAllowedDomains("");
     if (suggested.trim().length > 0) setForm((prev) => ({ ...prev, allowedDomains: suggested }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [site.id]);
+  }, [site]);
 
   useEffect(() => {
     // When primary URL is set/changed, keep sensible defaults in empty fields.
@@ -276,70 +385,20 @@ export function SiteConfigForm({
   }, [plan, site.id, form.scrapeCoverage, form.scrapeSpeed, persistSite]);
 
   useEffect(() => {
-    // Build a stable snapshot of the persisted site state to compare against.
-    // We only include the fields that the form can edit.
-    const snapshot = JSON.stringify({
-      name: site.name,
-      primaryColor: site.primaryColor,
-      title: site.title,
-      greeting: site.greeting,
-      primaryUrl: site.primaryUrl ?? "",
-      logoUrl: site.logoUrl ?? "",
-      allowedDomains: stripImplicitDomains(site.allowedDomains).join(", "),
-      allowedTopics: site.allowedTopics.join(", "),
-      modelId: site.modelId,
-      temperature: site.temperature,
-      scrapeSeedUrls: Array.isArray((site.scrapeConfig as any)?.seed_urls)
-        ? ((site.scrapeConfig as any).seed_urls as unknown[])
-            .filter((v: unknown): v is string => typeof v === "string")
-            .join("\n")
-        : site.primaryUrl
-          ? site.primaryUrl
-          : "",
-      scrapeAllowedPrefixes: Array.isArray((site.scrapeConfig as any)?.allowed_prefixes)
-        ? ((site.scrapeConfig as any).allowed_prefixes as unknown[])
-            .filter((v: unknown): v is string => typeof v === "string")
-            .join("\n")
-        : (() => {
-            try {
-              const u = new URL(site.primaryUrl || "");
-              return `${u.origin}/`;
-            } catch {
-              return "";
-            }
-          })(),
-      scrapeCoverage: (() => {
-        const raw = site.scrapeConfig as Record<string, unknown> | null | undefined;
-        const mp = persistedInt(raw?.max_pages);
-        if (mp === null) return "basic";
-        if (mp <= 10) return "basic";
-        if (mp <= 50) return "wide";
-        return "thorough";
-      })(),
-      scrapeSpeed: (() => {
-        const raw = site.scrapeConfig as Record<string, unknown> | null | undefined;
-        const w = persistedInt(raw?.parallel_workers);
-        if (w === null) return "speedy";
-        if (w <= 3) return "quick";
-        if (w <= 7) return "speedy";
-        return "fastest";
-      })(),
-    });
-    initialSnapshotRef.current = snapshot;
-    // Emit initial dirty state (false)
-    window.dispatchEvent(new CustomEvent("site:dirty", { detail: { dirty: false } }));
-    lastDirtyRef.current = false;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [site.id]);
+    const frame = window.requestAnimationFrame(() => markClean());
+    return () => window.cancelAnimationFrame(frame);
+  }, [markClean, site.id]);
 
   // Dirty-state emitter for the setup widget.
   useEffect(() => {
-    const dirty = JSON.stringify(form) !== initialSnapshotRef.current;
+    if (!initialSnapshotRef.current) return;
+    const dirty = formSnapshot(form) !== initialSnapshotRef.current;
+    setIsDirty(dirty);
     if (dirty !== lastDirtyRef.current) {
       lastDirtyRef.current = dirty;
       window.dispatchEvent(new CustomEvent("site:dirty", { detail: { dirty } }));
     }
-  }, [form]);
+  }, [form, formSnapshot]);
 
   useEffect(() => {
     const onRequestSave = () => persistSite();
@@ -349,81 +408,181 @@ export function SiteConfigForm({
 
   const tabDone = useMemo(() => {
     const branding = form.name.trim().length > 0 && form.primaryUrl.trim().length > 0;
-    const behavior = form.allowedDomains.trim().length > 0;
+    const behavior =
+      getUserFacingAllowedDomains(form.allowedDomains.split(/[,\n]+/), internalAppHost).length > 0;
     const knowledge = Boolean(site.livePineconeNs);
     return { branding, behavior, knowledge };
-  }, [form.allowedDomains, form.name, form.primaryUrl, site.livePineconeNs]);
+  }, [form.allowedDomains, form.name, form.primaryUrl, internalAppHost, site.livePineconeNs]);
 
   const tabs = [
     {
       id: "branding" as const,
       label: "Branding",
-      icon: (
-        <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current">
-          <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm1 5v5.59l3.7 3.7-1.4 1.41L11 13V7h2z" />
-        </svg>
-      ),
+      icon: Palette,
       desc: "Logo, colors, demo",
     },
     {
       id: "behavior" as const,
       label: "Behavior",
-      icon: (
-        <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current">
-          <path d="M12 1a11 11 0 1011 11A11 11 0 0012 1zm6 6h-2.35a15.7 15.7 0 00-1.1-2.44A9.07 9.07 0 0118 7zM12 3a13.4 13.4 0 011.73 4H10.27A13.4 13.4 0 0112 3zM4 13a8.9 8.9 0 010-2h3.06a16.6 16.6 0 000 2H4zm.35-6A9.07 9.07 0 018.45 4.56 15.7 15.7 0 007.35 7H4.35zM6 12a14.4 14.4 0 01.17-2h3.35a17.7 17.7 0 000 4H6.17A14.4 14.4 0 016 12zm1.35 5h-3A9.07 9.07 0 018.45 19.44 15.7 15.7 0 007.35 17zm2.92 0h3.46A13.4 13.4 0 0112 21a13.4 13.4 0 01-1.73-4zm.19-3a15.8 15.8 0 010-4h3.08a15.8 15.8 0 010 4h-3.08zM15.55 19.44A9.07 9.07 0 0119.65 17h-3a15.7 15.7 0 01-1.1 2.44zM16.83 14H18v-4h-1.17a16.6 16.6 0 010 4zM16.65 11h3.06a8.9 8.9 0 010 2h-3.06a16.6 16.6 0 000-2z" />
-        </svg>
-      ),
+      icon: ShieldCheck,
       desc: "Domains, topics, model",
     },
     {
       id: "knowledge" as const,
       label: "Knowledge",
-      icon: (
-        <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current">
-          <path d="M19 2H8a2 2 0 00-2 2v14a2 2 0 002 2h11v2H7a4 4 0 01-4-4V6a4 4 0 014-4h12v2z" />
-          <path d="M10 6h10v2H10V6zm0 4h10v2H10v-2zm0 4h7v2h-7v-2z" />
-        </svg>
-      ),
-      desc: "Scrape & Pinecone",
+      icon: BookOpenText,
+      desc: "Pages, reading, index",
     },
   ];
 
+  const selectTab = (nextTab: "branding" | "behavior" | "knowledge") => {
+    setTab(nextTab);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("view", "setup");
+    params.set("tab", nextTab);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  };
+
+  const savedAtLabel = lastSavedAt
+    ? lastSavedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    : "";
+  const saveStatus = updateSite.isPending
+    ? {
+        icon: Loader2,
+        label: "Saving changes",
+        helper: "Settings are being updated.",
+        className: "border-blue-200 bg-blue-50 text-blue-800",
+        spin: true,
+      }
+    : updateSite.error
+      ? {
+          icon: AlertCircle,
+          label: "Save failed",
+          helper: updateSite.error.message,
+          className: "border-red-200 bg-red-50 text-red-800",
+          spin: false,
+        }
+      : isDirty
+        ? {
+            icon: AlertCircle,
+            label: "Unsaved changes",
+            helper: "Save before previewing or publishing.",
+            className: "border-amber-200 bg-amber-50 text-amber-900",
+            spin: false,
+          }
+        : {
+            icon: CheckCircle2,
+            label: "Saved",
+            helper: savedAtLabel ? `Last saved at ${savedAtLabel}.` : "Settings are up to date.",
+            className: "border-emerald-200 bg-emerald-50 text-emerald-800",
+            spin: false,
+          };
+  const SaveStatusIcon = saveStatus.icon;
+  const knowledgeWorkSurface = tab === "knowledge";
+  const showKnowledgeSaveControls =
+    knowledgeWorkSurface && (isDirty || updateSite.isPending || Boolean(updateSite.error));
+  const shellClass = knowledgeWorkSurface
+    ? "min-w-0 space-y-4"
+    : "min-w-0 rounded-lg border border-gray-200 bg-white shadow-sm";
+  const tabsClass = knowledgeWorkSurface
+    ? "rounded-lg border border-gray-200 bg-white px-3 py-4 shadow-sm sm:px-6"
+    : "border-b border-gray-200 px-3 py-4 sm:px-6";
+  const contentClass = knowledgeWorkSurface
+    ? showKnowledgeSaveControls
+      ? "space-y-5 pb-28"
+      : "space-y-5 pb-6"
+    : "space-y-5 p-4 sm:p-6";
+  const errorClass = knowledgeWorkSurface
+    ? "rounded-lg border border-red-100 bg-red-50/80 px-6 py-3 text-sm text-red-800"
+    : "border-t border-red-100 bg-red-50/80 px-6 py-3 text-sm text-red-800";
+  const saveBarClass = knowledgeWorkSurface
+    ? "fixed bottom-4 left-4 right-4 z-50 rounded-lg border border-gray-200 bg-white/95 px-3 py-2 shadow-[0_16px_36px_rgba(15,23,42,0.16)] backdrop-blur sm:px-4 lg:left-[17.5rem]"
+    : "sticky bottom-0 z-10 border-t border-gray-200 bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.06)] backdrop-blur sm:px-6";
+  const saveStatusBoxClass = knowledgeWorkSurface
+    ? `flex min-w-0 items-center gap-3 rounded-lg border px-3 py-1.5 ${saveStatus.className}`
+    : `flex min-w-0 items-start gap-3 rounded-lg border px-3 py-2 ${saveStatus.className}`;
+  const saveStatusHelperClass = knowledgeWorkSurface
+    ? "sr-only"
+    : "mt-0.5 break-words text-xs opacity-80";
+  const saveControls = (
+    <div className={saveBarClass}>
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div
+          className={saveStatusBoxClass}
+          role="status"
+          aria-live="polite"
+        >
+          <SaveStatusIcon
+            className={`h-4 w-4 shrink-0 ${saveStatus.spin ? "animate-spin" : ""}`}
+            aria-hidden
+          />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold">{saveStatus.label}</p>
+            <p className={saveStatusHelperClass}>{saveStatus.helper}</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => persistSite()}
+          disabled={updateSite.isPending || (!isDirty && !updateSite.error)}
+          className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-gray-950 px-4 text-sm font-semibold text-white shadow-sm hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-600"
+        >
+          {updateSite.isPending ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+          ) : (
+            <Save className="h-4 w-4" aria-hidden />
+          )}
+          {updateSite.isPending ? "Saving" : updateSite.error ? "Retry save" : "Save changes"}
+        </button>
+      </div>
+    </div>
+  );
+
   return (
-    <div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
+    <div className={shellClass}>
       {/* Tabs */}
-      <div className="border-b border-gray-200 px-6 py-4">
-        <div className="grid grid-cols-3 gap-2 rounded-2xl bg-gray-50 p-1.5">
+      <div className={tabsClass}>
+        <div
+          className="grid grid-cols-3 gap-1.5 rounded-lg bg-gray-50 p-1.5"
+          role="tablist"
+          aria-label="Widget setup sections"
+        >
           {tabs.map((t) => {
             const active = tab === t.id;
             const done = tabDone[t.id];
+            const Icon = t.icon;
             return (
               <button
                 key={t.id}
                 type="button"
-                onClick={() => setTab(t.id)}
-                className={`group rounded-xl px-3 py-2.5 text-left transition-all ${
+                id={`setup-tab-${t.id}`}
+                role="tab"
+                onClick={() => selectTab(t.id)}
+                aria-label={`${t.label}: ${t.desc}. ${done ? "Configured" : "Not configured"}`}
+                aria-selected={active}
+                aria-current={active ? "page" : undefined}
+                aria-controls={`setup-panel-${t.id}`}
+                className={`group min-h-11 min-w-0 rounded-lg px-1.5 py-2 text-center transition-all sm:px-3 sm:py-2.5 sm:text-left ${
                   active
                     ? "bg-white shadow-sm ring-1 ring-gray-200"
                     : "hover:bg-white/60"
                 }`}
               >
-                <div className="flex items-center gap-2">
+                <div className="flex min-w-0 items-center justify-center gap-1.5 sm:justify-start sm:gap-2">
                   <span
-                    className={`${
-                      active ? "text-indigo-600" : "text-gray-400 group-hover:text-indigo-500"
-                    }`}
+                    className={`shrink-0 ${active ? "text-gray-900" : "text-gray-400 group-hover:text-gray-700"}`}
                   >
-                    {t.icon}
+                    <Icon className="h-4 w-4" aria-hidden />
                   </span>
                   <span
-                    className={`text-sm font-semibold ${
+                    className={`min-w-0 whitespace-nowrap text-xs font-semibold sm:truncate sm:text-sm ${
                       active ? "text-gray-900" : "text-gray-700"
                     }`}
                   >
                     {t.label}
                   </span>
                   <span
-                    className={`ml-auto flex h-5 w-5 items-center justify-center rounded-full border ${
+                    className={`ml-auto hidden h-5 w-5 items-center justify-center rounded-full border sm:flex ${
                       done
                         ? "border-green-200 bg-green-50 text-green-700"
                         : "border-amber-200 bg-amber-50 text-amber-700"
@@ -431,22 +590,28 @@ export function SiteConfigForm({
                     aria-label={done ? `${t.label} configured` : `${t.label} not configured`}
                   >
                     {done ? (
-                      <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current">
-                        <path d="M9 16.2l-3.5-3.5L4 14.2l5 5 12-12-1.5-1.5L9 16.2z" />
-                      </svg>
+                      <Check className="h-3.5 w-3.5" aria-hidden />
                     ) : (
                       <span className="h-1.5 w-1.5 rounded-full bg-current" />
                     )}
                   </span>
                 </div>
-                <p className="mt-0.5 text-xs text-gray-500">{t.desc}</p>
+                <p className="mt-0.5 hidden truncate text-xs text-gray-500 sm:block">{t.desc}</p>
               </button>
             );
           })}
         </div>
       </div>
 
-      <div className="p-6 space-y-5">
+      {knowledgeWorkSurface ? <div id="source-pages" className="scroll-mt-6" /> : null}
+      {showKnowledgeSaveControls ? saveControls : null}
+
+      <div
+        id={`setup-panel-${tab}`}
+        role="tabpanel"
+        aria-labelledby={`setup-tab-${tab}`}
+        className={contentClass}
+      >
         {tab === "branding" ? (
           <SiteConfigBrandingTab
             form={{
@@ -470,6 +635,7 @@ export function SiteConfigForm({
         {tab === "behavior" ? (
           <SiteConfigBehaviorTab
             form={{
+              primaryUrl: form.primaryUrl,
               allowedDomains: form.allowedDomains,
               allowedTopics: form.allowedTopics,
               modelId: form.modelId,
@@ -494,10 +660,20 @@ export function SiteConfigForm({
             siteLivePineconeNs={site.livePineconeNs}
             plan={plan}
             form={{
+              scrapeProvider: form.scrapeProvider,
+              scrapeCloudflareRenderMode: form.scrapeCloudflareRenderMode,
+              scrapeCloudflareDiscoveryMode: form.scrapeCloudflareDiscoveryMode,
+              scrapeCloudflarePerSeedLimit: form.scrapeCloudflarePerSeedLimit,
+              scrapeSourceGroupsJson: form.scrapeSourceGroupsJson,
               scrapeSeedUrls: form.scrapeSeedUrls,
               scrapeAllowedPrefixes: form.scrapeAllowedPrefixes,
               scrapeCoverage: form.scrapeCoverage,
               scrapeSpeed: form.scrapeSpeed,
+              scrapeMaxDepth: form.scrapeMaxDepth,
+              scrapeSkipMap: form.scrapeSkipMap,
+              scrapeFinetune: form.scrapeFinetune,
+              scrapeUrlWhitelistPatterns: form.scrapeUrlWhitelistPatterns,
+              scrapeUrlBlacklistPatterns: form.scrapeUrlBlacklistPatterns,
             }}
             setForm={(next) =>
               setForm((prev) => ({
@@ -505,18 +681,22 @@ export function SiteConfigForm({
                 ...next,
               }))
             }
-            normalizeHttps={normalizeHttps}
+            normalizeSourceUrl={normalizeSourceUrl}
             onRefresh={() => router.refresh()}
-            onPersist={persistSite}
+            onPersist={(next) =>
+              persistSite(next ? { ...formRef.current, ...next } : undefined)
+            }
           />
         ) : null}
       </div>
 
       {updateSite.error ? (
-        <div className="border-t border-red-100 bg-red-50/80 px-6 py-3 text-sm text-red-800">
+        <div className={errorClass}>
           {updateSite.error.message}
         </div>
       ) : null}
+
+      {knowledgeWorkSurface ? null : saveControls}
     </div>
   );
 }

@@ -83,7 +83,22 @@ export async function GET(req: NextRequest) {
     return jsonNoStore({ error: "SCRAPER_PIPELINE_BASE_URL not configured" }, 500);
   }
 
-  const status = await scraperRunStatus(parsed.data.runId);
+  let status: any;
+  try {
+    status = await scraperRunStatus(parsed.data.runId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("Run not found")) {
+      throw error;
+    }
+    status = {
+      current_step: "scrape",
+      error:
+        "The page-reading service no longer has this run in memory. Start a new run.",
+      pipeline_status: "aborted",
+      run_id: parsed.data.runId,
+    };
+  }
 
   const done =
     status.pipeline_status === "succeeded" ||
@@ -114,6 +129,15 @@ export async function GET(req: NextRequest) {
         response: (status as unknown) as Prisma.InputJsonValue,
       },
     }).catch(() => null);
+
+    if (status.pipeline_status === "succeeded" && liveNs) {
+      await db.site
+        .update({
+          where: { id: site.id },
+          data: { livePineconeNs: liveNs },
+        })
+        .catch(() => null);
+    }
   }
 
   await (db.knowledgeBaseRun.upsert as unknown as (args: any) => Promise<unknown>)({
@@ -140,4 +164,3 @@ export async function GET(req: NextRequest) {
 
   return jsonNoStore(status);
 }
-

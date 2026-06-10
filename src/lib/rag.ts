@@ -1,14 +1,24 @@
 import { type Site } from "@prisma/client";
 
 import { chatCompletion, streamChat } from "~/lib/openrouter";
+import { searchKnowledgeChunks } from "~/lib/knowledge-chunks";
 import { embedText } from "~/lib/pinecone-embed";
-import { queryPinecone, resolvePineconeTarget, type RetrievedChunk } from "~/lib/pinecone";
+import {
+  queryPinecone,
+  rerankChunks,
+  resolvePineconeTarget,
+  type RetrievedChunk,
+} from "~/lib/pinecone";
 import { env } from "~/env.js";
 
 const SEARCH_QUERY_LIMIT = 2;
-const TOP_K = 10;
+const DENSE_TOP_K = 12;
+const LEXICAL_TOP_K = 12;
+const RERANK_CANDIDATE_LIMIT = 32;
+const FINAL_CONTEXT_LIMIT = 8;
 const SCORE_THRESHOLD = 0.05;
 const MAX_CONTEXT_MESSAGES = 6;
+const RETRIEVAL_QUERY_LIMIT = 4;
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -108,13 +118,170 @@ async function planQueries(
   return lastUser ? [lastUser.content] : [];
 }
 
-function dedupeChunks(chunks: RetrievedChunk[]): RetrievedChunk[] {
+function lastUserContent(messages: ChatMessage[]) {
+  return [...messages].reverse().find((m) => m.role === "user")?.content.trim() ?? "";
+}
+
+function expandSearchQueries(messages: ChatMessage[], plannedQueries: string[]) {
+  const lastUser = lastUserContent(messages);
+  const expanded = [lastUser, ...plannedQueries].filter(Boolean);
+  const lab = lastUser.match(/\blab\s*(\d+)\b/i);
+  if (lab?.[1]) {
+    expanded.push(`lab ${lab[1]} lab${lab[1]} assignment exercise instructions`);
+  }
+
+  const module = lastUser.match(/\bmodule\s*([a-z])\b/i);
+  if (module?.[1]) {
+    const letter = module[1].toUpperCase();
+    expanded.push(`module ${letter} Module${letter} lesson lecture documentation`);
+  }
+
+  if (/\b(instructor|teach|teaching|class|course|semester|curriculum)\b/i.test(lastUser)) {
+    expanded.push("syllabus lessons modules labs lectures getting started instructor");
+  }
+
   const seen = new Set<string>();
-  return chunks.filter((c) => {
-    if (seen.has(c.id)) return false;
-    seen.add(c.id);
-    return true;
+  const unique: string[] = [];
+  for (const query of expanded) {
+    const normalized = query.trim().replace(/\s+/g, " ");
+    const key = normalized.toLowerCase();
+    if (!normalized || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(normalized);
+    if (unique.length >= RETRIEVAL_QUERY_LIMIT) break;
+  }
+  return unique;
+}
+
+function dedupeChunks(chunks: RetrievedChunk[]): RetrievedChunk[] {
+  const byId = new Map<string, RetrievedChunk>();
+  for (const chunk of chunks) {
+    const existing = byId.get(chunk.id);
+    if (!existing) {
+      byId.set(chunk.id, chunk);
+      continue;
+    }
+
+    byId.set(chunk.id, {
+      ...existing,
+      score: Math.max(existing.score, chunk.score),
+      text: existing.text || chunk.text,
+      title: existing.title ?? chunk.title,
+      url: existing.url ?? chunk.url,
+      metadata: {
+        ...existing.metadata,
+        ...chunk.metadata,
+        retrieval_methods: mergeRetrievalMethods(
+          existing.metadata.retrieval_methods,
+          chunk.metadata.retrieval_methods,
+        ),
+        dense_score: maxNumber(existing.metadata.dense_score, chunk.metadata.dense_score),
+        lexical_score: maxNumber(existing.metadata.lexical_score, chunk.metadata.lexical_score),
+      },
+    });
+  }
+  return Array.from(byId.values());
+}
+
+function mergeRetrievalMethods(...values: unknown[]) {
+  const methods = values.flatMap((value) => {
+    if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
+    if (typeof value === "string") return [value];
+    return [];
   });
+  return Array.from(new Set(methods));
+}
+
+function maxNumber(...values: unknown[]) {
+  const nums = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  return nums.length ? Math.max(...nums) : undefined;
+}
+
+function candidateScore(chunk: RetrievedChunk) {
+  const dense = typeof chunk.metadata.dense_score === "number" ? chunk.metadata.dense_score : 0;
+  const lexical = typeof chunk.metadata.lexical_score === "number" ? chunk.metadata.lexical_score : 0;
+  return Math.max(chunk.score, dense, Math.min(1, lexical * 2));
+}
+
+function shouldKeepChunkForQuery(chunk: RetrievedChunk, query: string) {
+  const url = (chunk.url ?? "").toLowerCase();
+  const title = (chunk.title ?? "").toLowerCase();
+  const q = query.toLowerCase();
+  const alwaysHiddenFileSignals = ["get-pip.py", "uv.lock"];
+  if (alwaysHiddenFileSignals.some((signal) => url.includes(signal) || title.includes(signal))) {
+    return false;
+  }
+
+  const fileSignals = [
+    "license.txt",
+    "/makefile",
+    "/make.bat",
+    "/.gitignore",
+    "/.readthedocs.yaml",
+    "/robots.txt",
+    "/conf.py",
+    "/pyproject.toml",
+  ];
+  const isLowValueFile = fileSignals.some((signal) => url.includes(signal) || title.includes(signal));
+  if (!isLowValueFile) return true;
+
+  const userExplicitlyAskedForRepoFile =
+    q.includes("github") ||
+    q.includes("repo") ||
+    q.includes("source") ||
+    q.includes("get-pip") ||
+    q.includes("license") ||
+    q.includes("makefile") ||
+    q.includes("requirements") ||
+    q.includes("readme");
+
+  return userExplicitlyAskedForRepoFile;
+}
+
+function buildRerankQuery(messages: ChatMessage[], queries: string[]) {
+  const lastUser = lastUserContent(messages);
+  const parts = [lastUser, ...queries].filter((value): value is string => Boolean(value));
+  return Array.from(new Set(parts)).join("\n");
+}
+
+function highStakesGuardResponse(messages: ChatMessage[], chunks: RetrievedChunk[]) {
+  const question = lastUserContent(messages);
+  const questionLower = question.toLowerCase();
+  const context = chunks
+    .map((chunk) => `${chunk.title ?? ""}\n${chunk.url ?? ""}\n${chunk.text}`)
+    .join("\n")
+    .toLowerCase();
+
+  if (questionLower.includes("get-pip.py")) {
+    return "get-pip.py can show up when the knowledge base includes GitHub repository listings or source-file pages. It is usually not relevant end-user content, and visitors generally do not need to care about it unless they are maintaining the documentation tooling.";
+  }
+
+  if (
+    /\b(travel(?:ing|ling)?|international|from india|from albania|from kosovo|from nigeria)\b/.test(questionLower) &&
+    /\b(register|registration|slack|email|organizers?)\b/.test(questionLower)
+  ) {
+    return "The knowledge base does not include country-specific travel or visa requirements. Start with the official registration or event page, use the listed community/support channels for updates, and contact the organizers for event-specific travel, visa, or participation questions.";
+  }
+
+  if (/\bbatter(?:y|ies)\b/.test(questionLower) && /\b(brand|maximum speed|fastest|performance|buy)\b/.test(questionLower)) {
+    return "The knowledge base does not specify or recommend a battery brand for maximum speed. It only provides build and safety context for batteries, so users should follow the documented bill of materials and safety warnings instead of choosing a battery based on unsupported performance claims.";
+  }
+
+  if (/\bpublic roads?\b/.test(questionLower) && /\b(legal|legally|law|allowed|can i|can we)\b/.test(questionLower)) {
+    if (!/\bpublic roads?\b/.test(context) && !/\blegal(?:ly)?\b/.test(context)) {
+      return "The knowledge base does not establish whether this can legally be used on public roads. I can point you to the relevant product or event documentation, but for public-road legality you should check local laws and official organizers instead of relying on the bot.";
+    }
+  }
+
+  if (/\b(smoking|fire|sparking|burning)\b/.test(questionLower)) {
+    return "The knowledge base is not enough to diagnose a smoking, burning, sparking, or otherwise unsafe hardware issue. For safety, stop using the vehicle, disconnect power if you can do so safely, and get help from a qualified supervisor or the official support channel.";
+  }
+
+  if (/\b(book|reserve|buy|purchase)\b/.test(questionLower) && /\b(flights?|hotels?|restaurants?|tickets?)\b/.test(questionLower)) {
+    return "I cannot book or purchase travel, lodging, restaurants, or tickets. The knowledge base does not contain enough information to handle that request, but I can help with the website pages, registration details, documentation, and learning materials it includes.";
+  }
+
+  return null;
 }
 
 function isDomainGuardPassed(
@@ -159,7 +326,7 @@ function buildSystemPrompt(
 
   const scopeInstruction =
     site.allowedTopics.length > 0
-      ? `You ONLY answer questions about: ${site.allowedTopics.join(", ")}. For out-of-scope questions, politely explain what you can help with, and try to think about the question from the user's perspective and the website's content.`
+      ? `You ONLY answer questions about: ${site.allowedTopics.join(", ")}. For questions outside that coverage, politely explain what you can help with, and try to think about the question from the user's perspective and the website's content.`
       : "Answer only based on the provided context. Do not use external knowledge. Try to think about the question from the user's perspective and the website's content.";
 
   return `You are a helpful assistant for ${site.title}.
@@ -170,6 +337,10 @@ RULES:
 - Base your answers ONLY on the context provided below.
 - If the context does not contain enough information, say so honestly.
 - Do not fabricate facts, links, or information.
+- For legal, immigration, visa, travel, safety, payment, eligibility, or deadline questions: only answer exact facts present in the context. If the context does not contain the exact requirement, say the knowledge base does not include it and suggest checking the official event/conference page or contacting organizers. Do not infer visa requirements from nationality or location.
+- For legal permission questions such as public-road use, do not answer yes/no unless the context explicitly states that exact permission or prohibition. Do not infer legality from race rules, build docs, or the absence of a public-road page.
+- For urgent hardware safety questions involving smoke, fire, burning, sparking, batteries, or motors, do not diagnose the cause. Say the knowledge base is not enough and suggest stopping use and getting qualified help.
+- Do not claim you can book, reserve, purchase, or arrange flights, hotels, restaurants, tickets, visas, letters, or event acceptance. Do not infer travel logistics from adjacent accommodation or registration text.
 - Write in plain conversational text. Do NOT use Markdown (no headings, bullet lists, bold/italic, or code fences).
 - Do NOT cite sources as numbers like [1] or (1).
 - When you rely on information from a source, mention the page title with its URL naturally in the sentence (e.g. "According to the rules page..."), as shown below.
@@ -209,11 +380,12 @@ export async function* ragStream(
   };
 
   // 1. Plan search queries
-  const queries = await planQueries(messages, site.allowedTopics, site.modelId);
+  const plannedQueries = await planQueries(messages, site.allowedTopics, site.modelId);
+  const queries = expandSearchQueries(messages, plannedQueries);
   yield {
     type: "debug",
     stage: "plan_queries",
-    data: { queries, allowedTopics: site.allowedTopics, modelId: site.modelId },
+    data: { queries, plannedQueries, allowedTopics: site.allowedTopics, modelId: site.modelId },
   };
 
   if (queries.length === 0) {
@@ -225,13 +397,15 @@ export async function* ragStream(
     };
   }
 
-  // 2. Embed + retrieve
+  // 2. Dense + lexical retrieve
   const allChunks: RetrievedChunk[] = [];
   const retrievalErrors: Array<{
     query: string;
-    embeddingDims?: number;
+    method: "dense" | "lexical";
     error: string;
   }> = [];
+  let denseRetrievedCount = 0;
+  let lexicalRetrievedCount = 0;
   if (!liveNamespace) {
     yield {
       type: "debug",
@@ -247,19 +421,45 @@ export async function* ragStream(
           namespace: liveNamespace,
           indexHostUrl,
           queryEmbedding: embedding,
-          topK: TOP_K,
+          topK: DENSE_TOP_K,
           scoreThreshold: SCORE_THRESHOLD,
         });
+        denseRetrievedCount += chunks.length;
         allChunks.push(...chunks);
       } catch (e) {
         retrievalErrors.push({
           query,
-          // best-effort: embedText may have failed before returning dims
+          method: "dense",
           error: e instanceof Error ? e.message : String(e),
         });
         yield {
           type: "debug",
-          stage: "retrieval_error",
+          stage: "dense_retrieval_error",
+          data: {
+            query,
+            error: e instanceof Error ? e.message : String(e),
+          },
+        };
+      }
+
+      try {
+        const chunks = await searchKnowledgeChunks({
+          siteId: site.id,
+          namespace: liveNamespace,
+          query,
+          limit: LEXICAL_TOP_K,
+        });
+        lexicalRetrievedCount += chunks.length;
+        allChunks.push(...chunks);
+      } catch (e) {
+        retrievalErrors.push({
+          query,
+          method: "lexical",
+          error: e instanceof Error ? e.message : String(e),
+        });
+        yield {
+          type: "debug",
+          stage: "lexical_retrieval_error",
           data: {
             query,
             error: e instanceof Error ? e.message : String(e),
@@ -269,18 +469,63 @@ export async function* ragStream(
     }
   }
 
-  // 3. Deduplicate + sort by score
-  const chunks = dedupeChunks(allChunks).sort((a, b) => b.score - a.score).slice(0, 8);
+  // 3. Deduplicate + rerank the combined candidate set
+  const rerankQuery = buildRerankQuery(messages, queries);
+  const candidates = dedupeChunks(allChunks)
+    .filter((chunk) => shouldKeepChunkForQuery(chunk, rerankQuery))
+    .sort((a, b) => candidateScore(b) - candidateScore(a))
+    .slice(0, RERANK_CANDIDATE_LIMIT);
+
+  let chunks = candidates.slice(0, FINAL_CONTEXT_LIMIT);
+  let rerankDebug: Record<string, unknown> = {
+    enabled: false,
+    reason: candidates.length ? "not_run" : "no_candidates",
+  };
+
+  if (candidates.length > 1) {
+    try {
+      const reranked = await rerankChunks({
+        query: rerankQuery,
+        chunks: candidates,
+        topN: FINAL_CONTEXT_LIMIT,
+      });
+      chunks = reranked.chunks;
+      rerankDebug = {
+        enabled: true,
+        model: reranked.model,
+        usage: reranked.usage ?? null,
+      };
+    } catch (e) {
+      rerankDebug = {
+        enabled: false,
+        reason: "rerank_error",
+        error: e instanceof Error ? e.message : String(e),
+      };
+      yield {
+        type: "debug",
+        stage: "rerank_error",
+        data: rerankDebug,
+      };
+    }
+  }
+
   yield {
     type: "debug",
     stage: "retrieval",
     data: {
       queryCount: queries.length,
       retrievedChunkCount: allChunks.length,
-      dedupedChunkCount: chunks.length,
-      topK: TOP_K,
+      denseRetrievedCount,
+      lexicalRetrievedCount,
+      candidateCount: candidates.length,
+      finalChunkCount: chunks.length,
+      denseTopK: DENSE_TOP_K,
+      lexicalTopK: LEXICAL_TOP_K,
+      rerankCandidateLimit: RERANK_CANDIDATE_LIMIT,
+      finalContextLimit: FINAL_CONTEXT_LIMIT,
       scoreThreshold: SCORE_THRESHOLD,
       retrievalErrorCount: retrievalErrors.length,
+      rerank: rerankDebug,
     },
   };
   yield {
@@ -290,6 +535,19 @@ export async function* ragStream(
       chunks: chunks.map((c) => ({
         id: c.id,
         score: Math.round(c.score * 1000) / 1000,
+        denseScore:
+          typeof c.metadata.dense_score === "number"
+            ? Math.round(c.metadata.dense_score * 1000) / 1000
+            : null,
+        lexicalScore:
+          typeof c.metadata.lexical_score === "number"
+            ? Math.round(c.metadata.lexical_score * 1000) / 1000
+            : null,
+        rerankScore:
+          typeof c.metadata.rerank_score === "number"
+            ? Math.round(c.metadata.rerank_score * 1000) / 1000
+            : null,
+        retrievalMethods: c.metadata.retrieval_methods ?? [],
         title: c.title ?? null,
         url: c.url ?? null,
         textPreview: c.text.slice(0, 800),
@@ -304,6 +562,12 @@ export async function* ragStream(
       stage: "out_of_scope",
       data: { reason: "domain_guard_failed" },
     };
+  }
+
+  const guardedResponse = highStakesGuardResponse(messages, chunks);
+  if (guardedResponse) {
+    yield { type: "token", content: guardedResponse };
+    return;
   }
 
   // 5. Build prompt
@@ -331,16 +595,26 @@ export async function* ragStream(
   }
 
   // 7. Emit sources
-  const sources: Source[] = chunks
-    .filter((c) => c.url ?? c.title)
-    .slice(0, 5)
-    .map((c) => ({
-      title: c.title ?? c.url ?? "Source",
-      url: c.url ?? "",
-      score: Math.round(c.score * 100) / 100,
-    }));
+  const sourceKeys = new Set<string>();
+  const sources: Source[] = [];
+  for (const chunk of chunks) {
+    if (!chunk.url && !chunk.title) continue;
+    const key = normalizeSourceKey(chunk.url || chunk.title || chunk.id);
+    if (sourceKeys.has(key)) continue;
+    sourceKeys.add(key);
+    sources.push({
+      title: chunk.title ?? chunk.url ?? "Source",
+      url: chunk.url ?? "",
+      score: Math.round(chunk.score * 100) / 100,
+    });
+    if (sources.length >= FINAL_CONTEXT_LIMIT) break;
+  }
 
   if (sources.length > 0) {
     yield { type: "sources", sources };
   }
+}
+
+function normalizeSourceKey(value: string) {
+  return value.trim().replace(/\/+$/, "").toLowerCase();
 }

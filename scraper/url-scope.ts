@@ -1,7 +1,7 @@
 import type { FirecrawlMapLink } from "./types.js";
 
 export type UrlCandidate = FirecrawlMapLink & {
-  source: "seed" | "map";
+  source: "seed" | "map" | "document" | "cloudflare" | "static-discovery";
 };
 
 export function canonicalizeUrl(raw: string): string | null {
@@ -82,11 +82,25 @@ function compileRegexes(patterns: string[] | undefined) {
 
   return patterns
     .map((pattern) => {
+      const trimmed = pattern.trim();
+      if (!trimmed) return null;
       try {
-        return new RegExp(pattern);
+        return new RegExp(trimmed);
       } catch {
-        return null;
+        return globPatternToRegex(trimmed);
       }
     })
     .filter((re): re is RegExp => Boolean(re));
+}
+
+function globPatternToRegex(pattern: string) {
+  const escaped = pattern
+    .split("*")
+    .map((part) => part.replace(/[|\\{}()[\]^$+?.]/g, "\\$&"))
+    .join(".*");
+  try {
+    return new RegExp(`^${escaped}$`);
+  } catch {
+    return null;
+  }
 }

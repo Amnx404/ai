@@ -9,6 +9,7 @@ import { scraperScrape } from "~/lib/scraper-pipeline";
 import { env } from "~/env.js";
 import { Prisma } from "@prisma/client";
 import { normalizeScrapeConfigObject } from "~/lib/scrape-config-normalize";
+import { resolveScrapeConfigSourceGroups } from "~/lib/scrape-source-groups";
 
 const bodySchema = z.object({
   siteId: z.string().min(1),
@@ -48,7 +49,9 @@ export async function POST(req: NextRequest) {
 
     const step = "scrape" as const;
 
-    const scrapePayload = normalizeScrapeConfigObject(parsed.data.scrape) as Record<string, unknown>;
+    const scrapePayload = resolveScrapeConfigSourceGroups(
+      normalizeScrapeConfigObject(parsed.data.scrape),
+    ) as Record<string, unknown>;
 
     // Persist scrapeConfig for the site (so it's visible/editable in UI)
     await db.site.update({
@@ -122,4 +125,3 @@ export async function POST(req: NextRequest) {
     );
   }
 }
-
