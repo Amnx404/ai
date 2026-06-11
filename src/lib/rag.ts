@@ -1,10 +1,9 @@
 import { type Site } from "@prisma/client";
 
 import { chatCompletion, streamChat } from "~/lib/openrouter";
-import { searchKnowledgeChunks } from "~/lib/knowledge-chunks";
-import { embedText } from "~/lib/pinecone-embed";
+import { searchKnowledgeChunks, searchKnowledgeChunksDense } from "~/lib/knowledge-chunks";
+import { embedText } from "~/lib/embed";
 import {
-  queryPinecone,
   rerankChunks,
   resolvePineconeTarget,
   type RetrievedChunk,
@@ -19,6 +18,9 @@ const FINAL_CONTEXT_LIMIT = 8;
 const SCORE_THRESHOLD = 0.05;
 const MAX_CONTEXT_MESSAGES = 6;
 const RETRIEVAL_QUERY_LIMIT = 4;
+// Reciprocal Rank Fusion constant. Standard value from the original RRF paper;
+// larger k flattens the contribution of top ranks, smaller k sharpens it.
+const RRF_K = 60;
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -197,10 +199,54 @@ function maxNumber(...values: unknown[]) {
   return nums.length ? Math.max(...nums) : undefined;
 }
 
-function candidateScore(chunk: RetrievedChunk) {
-  const dense = typeof chunk.metadata.dense_score === "number" ? chunk.metadata.dense_score : 0;
-  const lexical = typeof chunk.metadata.lexical_score === "number" ? chunk.metadata.lexical_score : 0;
-  return Math.max(chunk.score, dense, Math.min(1, lexical * 2));
+/**
+ * Reciprocal Rank Fusion of the dense and lexical channels.
+ *
+ * The two channels score on incompatible scales — dense is cosine similarity
+ * (~0..1) while lexical is Postgres `ts_rank_cd` (unbounded but typically tiny,
+ * ~0.001..0.01). The previous `max(dense, lexical*2)` fusion therefore let dense
+ * dominate and effectively ignored lexical agreement. RRF is scale-free: each
+ * channel ranks candidates independently and an item's fused score is the sum of
+ * `1/(k + rank)` across the channels it appears in, so a chunk that both channels
+ * surface rises above one that only a single channel found.
+ */
+function fuseByRRF(deduped: RetrievedChunk[], k = RRF_K): RetrievedChunk[] {
+  const rankBy = (scoreKey: "dense_score" | "lexical_score") => {
+    const rank = new Map<string, number>();
+    deduped
+      .filter((c) => typeof c.metadata[scoreKey] === "number")
+      .sort(
+        (a, b) =>
+          (b.metadata[scoreKey] as number) - (a.metadata[scoreKey] as number),
+      )
+      .forEach((c, i) => rank.set(c.id, i + 1));
+    return rank;
+  };
+
+  const denseRank = rankBy("dense_score");
+  const lexicalRank = rankBy("lexical_score");
+
+  return deduped
+    .map((chunk) => {
+      const dr = denseRank.get(chunk.id);
+      const lr = lexicalRank.get(chunk.id);
+      const rrf = (dr ? 1 / (k + dr) : 0) + (lr ? 1 / (k + lr) : 0);
+      return {
+        ...chunk,
+        // Keep `score` as the human-readable channel score for source display;
+        // ordering is driven by rrf_score in metadata.
+        metadata: {
+          ...chunk.metadata,
+          rrf_score: rrf,
+          dense_rank: dr ?? null,
+          lexical_rank: lr ?? null,
+        },
+      };
+    })
+    .sort(
+      (a, b) =>
+        (b.metadata.rrf_score as number) - (a.metadata.rrf_score as number),
+    );
 }
 
 function shouldKeepChunkForQuery(chunk: RetrievedChunk, query: string) {
@@ -363,21 +409,6 @@ export async function* ragStream(
   | { type: "error"; message: string }
 > {
   const liveNamespace = site.livePineconeNs?.trim() ?? "";
-  const { indexName, indexHostUrl } = resolvePineconeTarget(
-    site,
-    env.PINECONE_INDEX,
-    env.PINECONE_INDEX_HOST,
-  );
-  yield {
-    type: "debug",
-    stage: "pinecone_target",
-    data: {
-      indexName,
-      namespace: liveNamespace || null,
-      indexHostUrl: indexHostUrl ?? null,
-      namespaceSource: liveNamespace ? "live" : "missing_live",
-    },
-  };
 
   // 1. Plan search queries
   const plannedQueries = await planQueries(messages, site.allowedTopics, site.modelId);
@@ -416,12 +447,11 @@ export async function* ragStream(
     for (const query of queries) {
       try {
         const embedding = await embedText(query);
-        const chunks = await queryPinecone({
-          indexName,
+        const chunks = await searchKnowledgeChunksDense({
+          siteId: site.id,
           namespace: liveNamespace,
-          indexHostUrl,
           queryEmbedding: embedding,
-          topK: DENSE_TOP_K,
+          limit: DENSE_TOP_K,
           scoreThreshold: SCORE_THRESHOLD,
         });
         denseRetrievedCount += chunks.length;
@@ -471,10 +501,15 @@ export async function* ragStream(
 
   // 3. Deduplicate + rerank the combined candidate set
   const rerankQuery = buildRerankQuery(messages, queries);
-  const candidates = dedupeChunks(allChunks)
-    .filter((chunk) => shouldKeepChunkForQuery(chunk, rerankQuery))
-    .sort((a, b) => candidateScore(b) - candidateScore(a))
-    .slice(0, RERANK_CANDIDATE_LIMIT);
+  // Fuse the dense + lexical candidates with RRF, then keep the strongest set.
+  // When the cross-encoder reranker below is available it refines this ordering;
+  // when it is not (e.g. provider quota exhausted), this RRF order is what the
+  // model actually receives, so it must be good on its own.
+  const candidates = fuseByRRF(
+    dedupeChunks(allChunks).filter((chunk) =>
+      shouldKeepChunkForQuery(chunk, rerankQuery),
+    ),
+  ).slice(0, RERANK_CANDIDATE_LIMIT);
 
   let chunks = candidates.slice(0, FINAL_CONTEXT_LIMIT);
   let rerankDebug: Record<string, unknown> = {
@@ -547,6 +582,12 @@ export async function* ragStream(
           typeof c.metadata.rerank_score === "number"
             ? Math.round(c.metadata.rerank_score * 1000) / 1000
             : null,
+        rrfScore:
+          typeof c.metadata.rrf_score === "number"
+            ? Math.round(c.metadata.rrf_score * 100000) / 100000
+            : null,
+        denseRank: c.metadata.dense_rank ?? null,
+        lexicalRank: c.metadata.lexical_rank ?? null,
         retrievalMethods: c.metadata.retrieval_methods ?? [],
         title: c.title ?? null,
         url: c.url ?? null,

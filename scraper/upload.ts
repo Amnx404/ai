@@ -1,4 +1,3 @@
-import { Pinecone, type RecordMetadata } from "@pinecone-database/pinecone";
 import { readFile } from "fs/promises";
 import { join, resolve } from "path";
 
@@ -16,14 +15,28 @@ type PreparedChunk = {
   chars?: number;
 };
 
+const EMBED_MODEL = "perplexity/pplx-embed-v1-0.6b";
+const OPENROUTER_EMBED_URL = "https://openrouter.ai/api/v1/embeddings";
+
+async function embedTextsViaOpenRouter(texts: string[]): Promise<number[][]> {
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
+  if (!apiKey) throw new Error("OPENROUTER_API_KEY is not set");
+  const res = await fetch(OPENROUTER_EMBED_URL, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: EMBED_MODEL, input: texts }),
+  });
+  if (!res.ok) {
+    const err = await res.text().catch(() => "");
+    throw new Error(`OpenRouter embed ${res.status}: ${err}`);
+  }
+  const json = (await res.json()) as { data: Array<{ embedding: number[] }> };
+  return json.data.map((d) => d.embedding);
+}
+
 export async function runUpload(request: UploadRequest): Promise<ApiStatus> {
   const started = new Date();
   const runId = requireRunId(request.run_id);
-  const apiKey = process.env.PINECONE_API_KEY?.trim();
-  if (!apiKey) throw new Error("PINECONE_API_KEY is not set");
-
-  const indexName = process.env.PINECONE_INDEX?.trim();
-  if (!indexName) throw new Error("PINECONE_INDEX is not set");
 
   const outputRoot = resolve(process.env.SCRAPER_OUTPUT_DIR ?? ".temp/scraper-runs");
   const runDir = join(outputRoot, runId);
@@ -38,27 +51,18 @@ export async function runUpload(request: UploadRequest): Promise<ApiStatus> {
     throw new Error("No prepared chunks found to upload");
   }
 
+  const embedBatchSize = clampInteger(request.embed_batch_size, 64, 1, 100);
   const liveNamespace = request.staging_namespace?.trim() || makeLiveNamespace(request.live_prefix, runId);
-  const embedModel = request.embed_model?.trim() || process.env.PINECONE_EMBED_MODEL?.trim() || "llama-text-embed-v2";
-  const embedBatchSize = clampInteger(request.embed_batch_size, 64, 1, 96);
-  const upsertBatchSize = clampInteger(request.batch_size, 200, 1, 1000);
-  const pc = new Pinecone({ apiKey });
-  const index = pc.index(indexName, process.env.PINECONE_INDEX_HOST?.trim() || undefined);
-  const namespace = index.namespace(liveNamespace);
-  let upsertedCount = 0;
+  let embeddedCount = 0;
 
+  // Generate embeddings via OpenRouter and attach to chunks.
+  const chunksWithEmbeddings: Array<PreparedChunk & { embedding: number[] }> = [];
   for (let i = 0; i < chunks.length; i += embedBatchSize) {
     const batch = chunks.slice(i, i + embedBatchSize);
-    const embeddings = await embedTextsWithRetry(pc, embedModel, batch.map((chunk) => chunk.text));
-    const vectors = batch.map((chunk, offset) => ({
-      id: chunk.id,
-      values: embeddings[offset] ?? [],
-      metadata: chunkMetadata(chunk, runId),
-    }));
-
-    for (let j = 0; j < vectors.length; j += upsertBatchSize) {
-      await namespace.upsert(vectors.slice(j, j + upsertBatchSize));
-      upsertedCount += vectors.slice(j, j + upsertBatchSize).length;
+    const embeddings = await embedTextsViaOpenRouter(batch.map((c) => c.text));
+    for (let j = 0; j < batch.length; j++) {
+      chunksWithEmbeddings.push({ ...batch[j]!, embedding: embeddings[j] ?? [] });
+      embeddedCount++;
     }
   }
 
@@ -66,7 +70,7 @@ export async function runUpload(request: UploadRequest): Promise<ApiStatus> {
     siteId: request.site_id,
     namespace: liveNamespace,
     runId,
-    chunks,
+    chunks: chunksWithEmbeddings,
   });
 
   const finished = new Date();
@@ -77,75 +81,21 @@ export async function runUpload(request: UploadRequest): Promise<ApiStatus> {
     live_namespace: liveNamespace,
     started_at: started.toISOString(),
     finished_at: finished.toISOString(),
-    message: `Uploaded ${upsertedCount} chunks to Pinecone`,
+    message: `Embedded and stored ${embeddedCount} chunks in Neon pgvector`,
     outputs: {
       live_namespace: liveNamespace,
       namespace: liveNamespace,
-      pinecone_namespace: liveNamespace,
-      index_name: indexName,
-      index_host: process.env.PINECONE_INDEX_HOST?.trim() || null,
       ingestion_dir: ingestionDir,
       chunks_path: chunksPath,
-      upserted_count: upsertedCount,
+      embedded_count: embeddedCount,
       stored_chunk_count: chunkStore.stored,
-      chunk_store_skipped: chunkStore.skipped,
+      chunk_store_skipped: "skipped" in chunkStore ? chunkStore.skipped : false,
       chunk_store_reason: "reason" in chunkStore ? chunkStore.reason ?? null : null,
-      embed_model: embedModel,
+      embed_model: EMBED_MODEL,
     },
     logs: {
-      summary: `Uploaded ${upsertedCount} vectors to ${indexName}/${liveNamespace}; stored ${chunkStore.stored} chunks for lexical retrieval.`,
+      summary: `Embedded ${embeddedCount} chunks via Cloudflare AI; stored ${chunkStore.stored} in Neon pgvector (${liveNamespace}).`,
     },
-  };
-}
-
-async function embedTextsWithRetry(pc: Pinecone, model: string, texts: string[]) {
-  const maxAttempts = 3;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    try {
-      return await embedTexts(pc, model, texts);
-    } catch (error) {
-      if (attempt >= maxAttempts || !isPineconeRateLimit(error)) throw error;
-      await sleep(65_000);
-    }
-  }
-  throw new Error("Pinecone embed failed");
-}
-
-async function embedTexts(pc: Pinecone, model: string, texts: string[]) {
-  const res = await pc.inference.embed(model, texts, {
-    inputType: "passage",
-    truncate: "END",
-  });
-  return res.data.map((embedding) => (embedding.values ?? []) as number[]);
-}
-
-function isPineconeRateLimit(error: unknown) {
-  if (!error) return false;
-  const message =
-    error instanceof Error
-      ? error.message
-      : typeof error === "string"
-        ? error
-        : JSON.stringify(error);
-  return /429|RESOURCE_EXHAUSTED|max tokens per minute/i.test(message);
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function chunkMetadata(chunk: PreparedChunk, runId: string): RecordMetadata {
-  return {
-    text: chunk.text,
-    content: chunk.text,
-    title: chunk.title ?? chunk.url ?? "Untitled page",
-    url: chunk.url ?? "",
-    description: chunk.description ?? "",
-    run_id: runId,
-    page_index: chunk.page_index ?? 0,
-    chunk_index: chunk.chunk_index ?? 0,
-    chars: chunk.chars ?? chunk.text.length,
-    source: "scraper",
   };
 }
 

@@ -9,6 +9,7 @@ type StoredChunk = {
   page_index?: number;
   chunk_index?: number;
   chars?: number;
+  embedding?: number[] | null;
 };
 
 export async function storeKnowledgeChunks({
@@ -65,6 +66,25 @@ export async function storeKnowledgeChunks({
           })),
           skipDuplicates: true,
         });
+
+        // Store embeddings via raw SQL — Prisma createMany can't write vector columns.
+        const withEmbeddings = batch.filter((c) => c.embedding?.length);
+        if (withEmbeddings.length) {
+          const vectorIds = withEmbeddings.map((c) => c.id);
+          const embedStrs = withEmbeddings.map((c) => JSON.stringify(c.embedding));
+          await tx.$executeRaw`
+            UPDATE "KnowledgeChunk" AS kc
+            SET "embedding" = updates.emb::vector
+            FROM (
+              SELECT unnest(${vectorIds}::text[]) AS vid,
+                     unnest(${embedStrs}::text[]) AS emb
+            ) AS updates
+            WHERE kc."vectorId"   = updates.vid
+              AND kc."siteId"     = ${normalizedSiteId}
+              AND kc."namespace"  = ${namespace}
+          `;
+        }
+
         count += batch.length;
       }
       return count;

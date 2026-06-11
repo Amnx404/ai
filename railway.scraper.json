@@ -9,7 +9,7 @@
       "prisma/**",
       "scraper/**",
       "src/env.js",
-      "src/lib/pinecone*.ts",
+      "src/lib/embed.ts",
       "src/server/db.ts",
       "railway.scraper.json"
     ],

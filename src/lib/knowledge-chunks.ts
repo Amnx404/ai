@@ -15,6 +15,7 @@ type KnowledgeChunkInput = {
   chunkIndex?: number | null;
   chars?: number | null;
   metadata?: Prisma.InputJsonValue | null;
+  embedding?: number[] | null;
 };
 
 type LexicalRow = {
@@ -26,7 +27,25 @@ type LexicalRow = {
   score: number | null;
 };
 
-const TEXT_DOCUMENT_SQL = Prisma.sql`to_tsvector('english', concat_ws(' ', "title", "url", "description", "text"))`;
+type DenseRow = {
+  vectorId: string;
+  text: string;
+  title: string | null;
+  url: string;
+  metadata: Prisma.JsonValue | null;
+  score: number;
+};
+
+// Weighted full-text document: a title hit should outrank a body hit. Postgres
+// ts_rank_cd honours the A/B/C/D weight classes, so we tag each field instead of
+// flattening everything into one undifferentiated tsvector.
+//   A = title, B = description, C = url, D = body text
+const TEXT_DOCUMENT_SQL = Prisma.sql`(
+  setweight(to_tsvector('english', coalesce("title", '')), 'A') ||
+  setweight(to_tsvector('english', coalesce("description", '')), 'B') ||
+  setweight(to_tsvector('english', coalesce("url", '')), 'C') ||
+  setweight(to_tsvector('english', coalesce("text", '')), 'D')
+)`;
 
 export async function replaceKnowledgeChunks({
   siteId,
@@ -66,6 +85,25 @@ export async function replaceKnowledgeChunks({
         })),
         skipDuplicates: true,
       });
+
+      // Store embeddings via raw SQL — Prisma createMany can't write Unsupported types.
+      const withEmbeddings = batch.filter((c) => c.embedding?.length);
+      if (withEmbeddings.length) {
+        const vectorIds = withEmbeddings.map((c) => c.vectorId);
+        const embedStrs = withEmbeddings.map((c) => JSON.stringify(c.embedding));
+        await tx.$executeRaw`
+          UPDATE "KnowledgeChunk" AS kc
+          SET "embedding" = updates.emb::vector
+          FROM (
+            SELECT unnest(${vectorIds}::text[]) AS vid,
+                   unnest(${embedStrs}::text[]) AS emb
+          ) AS updates
+          WHERE kc."vectorId" = updates.vid
+            AND kc."siteId"    = ${siteId}
+            AND kc."namespace" = ${namespace}
+        `;
+      }
+
       count += batch.length;
     }
     return count;
@@ -120,6 +158,59 @@ export async function searchKnowledgeChunks({
         ...metadata,
         retrieval_methods: mergeRetrievalMethods(metadata.retrieval_methods, "lexical"),
         lexical_score: score,
+      },
+    };
+  });
+}
+
+export async function searchKnowledgeChunksDense({
+  siteId,
+  namespace,
+  queryEmbedding,
+  limit = 12,
+  scoreThreshold = 0.05,
+}: {
+  siteId: string;
+  namespace: string;
+  queryEmbedding: number[];
+  limit?: number;
+  scoreThreshold?: number;
+}): Promise<RetrievedChunk[]> {
+  if (!siteId || !namespace || !queryEmbedding.length) return [];
+
+  const vectorStr = JSON.stringify(queryEmbedding);
+  const safeLimit = Math.max(1, Math.min(50, Math.trunc(limit)));
+
+  const rows = await db.$queryRaw<DenseRow[]>(Prisma.sql`
+    SELECT
+      "vectorId",
+      "text",
+      "title",
+      "url",
+      "metadata",
+      (1 - ("embedding" <=> ${vectorStr}::vector)) AS "score"
+    FROM "KnowledgeChunk"
+    WHERE "siteId"    = ${siteId}
+      AND "namespace" = ${namespace}
+      AND "embedding" IS NOT NULL
+      AND (1 - ("embedding" <=> ${vectorStr}::vector)) >= ${scoreThreshold}
+    ORDER BY "embedding" <=> ${vectorStr}::vector ASC
+    LIMIT ${safeLimit}
+  `);
+
+  return rows.map((row) => {
+    const metadata = jsonObject(row.metadata);
+    const score = Number(row.score ?? 0);
+    return {
+      id: row.vectorId,
+      score,
+      text: row.text,
+      title: row.title ?? undefined,
+      url: row.url || undefined,
+      metadata: {
+        ...metadata,
+        retrieval_methods: mergeRetrievalMethods(metadata.retrieval_methods, "dense"),
+        dense_score: score,
       },
     };
   });

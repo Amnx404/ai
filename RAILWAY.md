@@ -1,94 +1,90 @@
 # Railway Deployment
 
-This repo is intended to run as two Railway services from the same GitHub repo:
+Two Railway services from the same GitHub repo:
 
-1. `web` uses `/railway.json` and runs the Next.js app.
-2. `scraper` uses `/railway.scraper.json` and runs the scraping pipeline service.
+1. **`web`** — Next.js app, uses `/railway.json`
+2. **`scraper`** — scraping pipeline, uses `/railway.scraper.json`
+
+Both services share the same **Neon** PostgreSQL database (`DATABASE_URL`). The scraper generates embeddings via OpenRouter (`baai/bge-m3`, 1024 dims) and stores them as pgvector in Neon. The web service queries pgvector directly — no Pinecone required for retrieval.
+
+---
 
 ## Web service
 
-Use the default Railway config file path:
+Config file path: `/railway.json`
 
-```text
-/railway.json
-```
+**Required variables:**
 
-Required variables:
+| Variable | Notes |
+|---|---|
+| `DATABASE_URL` | Neon pooled connection string (`?sslmode=require&channel_binding=require`) |
+| `NEXTAUTH_SECRET` | Random secret — `openssl rand -hex 32` |
+| `NEXTAUTH_URL` | Public URL of this service, e.g. `https://app.altegolabs.com` |
+| `callback_URL` | Same as `NEXTAUTH_URL` |
+| `WIDGET_JWT_SECRET` | Random secret for widget session tokens |
+| `OPENROUTER_API_KEY` | LLM (Gemini Flash) + embeddings (bge-m3) |
+| `SCRAPER_PIPELINE_BASE_URL` | Internal URL of the scraper service (set after scraper deploys) |
 
-```text
-DATABASE_URL
-NEXTAUTH_SECRET
-NEXTAUTH_URL
-WIDGET_JWT_SECRET
-OPENROUTER_API_KEY
-PINECONE_API_KEY
-PINECONE_INDEX
-SCRAPER_PIPELINE_BASE_URL
-callback_URL
-```
+**Optional variables:**
 
-Recommended optional variables:
+| Variable | Notes |
+|---|---|
+| `PINECONE_API_KEY` | Only needed if cross-encoder reranking via Pinecone is re-enabled |
+| `PINECONE_RERANK_MODEL` | Defaults to `bge-reranker-v2-m3` |
+| `RESEND_API_KEY` | Magic-link emails in production |
+| `RESEND_FROM` | e.g. `Alt Ego <onboarding@altegolabs.com>` |
+| `LANGFUSE_SECRET_KEY` | Observability traces |
+| `LANGFUSE_PUBLIC_KEY` | |
+| `LANGFUSE_BASE_URL` | |
+| `LANGFUSE_PROJECT_ID` | |
+| `SCRAPER_SCRAPE_PROVIDER` | `cloudflare` or `firecrawl` |
+| `SCRAPER_FINETUNE_MODEL` | Model for chunk cleaning step |
+| `FINETUNE_PROMPT` | Custom cleaning prompt |
 
-```text
-PINECONE_INDEX_HOST
-PINECONE_EMBED_MODEL
-PINECONE_RERANK_MODEL
-SCRAPER_SCRAPE_PROVIDER
-RESEND_API_KEY
-RESEND_FROM
-LANGFUSE_SECRET_KEY
-LANGFUSE_PUBLIC_KEY
-LANGFUSE_BASE_URL
-LANGFUSE_PROJECT_ID
-SCRAPER_FINETUNE_MODEL
-FINETUNE_PROMPT
-```
-
-Set `NEXTAUTH_URL` and `callback_URL` to the public production URL for the web service.
+---
 
 ## Scraper service
 
-Create a second Railway service from the same repo and set its config file path to:
+Config file path: `/railway.scraper.json`
 
-```text
-/railway.scraper.json
+**Required variables:**
+
+| Variable | Notes |
+|---|---|
+| `DATABASE_URL` | Same Neon connection string as the web service |
+| `OPENROUTER_API_KEY` | Embeddings via `baai/bge-m3` |
+
+**Provider variables** (pick one):
+
 ```
-
-Required variables:
-
-```text
-DATABASE_URL
-PINECONE_API_KEY
-PINECONE_INDEX
-```
-
-Required provider variables depend on the selected scraper:
-
-```text
+# Cloudflare Browser Rendering scraper
 SCRAPER_SCRAPE_PROVIDER=cloudflare
-CLOUDFLARE_ACCOUNT_ID
-CLOUDFLARE_API_TOKEN
-```
+CLOUDFLARE_ACCOUNT_ID=...
+CLOUDFLARE_API_TOKEN=...   (Browser Rendering permission)
 
-or:
-
-```text
+# OR Firecrawl scraper
 SCRAPER_SCRAPE_PROVIDER=firecrawl
-FIRECRAWL_API_KEY
+FIRECRAWL_API_KEY=...
 ```
 
-Recommended optional variables:
+**Optional variables:**
 
-```text
-PINECONE_INDEX_HOST
-PINECONE_EMBED_MODEL
-OPENROUTER_API_KEY
-SCRAPER_FINETUNE_MODEL
-FINETUNE_PROMPT
-SCRAPER_OUTPUT_DIR
-FIRECRAWL_JOB_TIMEOUT_MS
-CLOUDFLARE_CRAWL_JOB_TIMEOUT_MS
-CLOUDFLARE_CRAWL_STALL_TIMEOUT_MS
-```
+| Variable | Notes |
+|---|---|
+| `OPENROUTER_MODEL` | Override for chunk-cleaning LLM |
+| `SCRAPER_FINETUNE_MODEL` | |
+| `FINETUNE_PROMPT` | |
+| `SCRAPER_OUTPUT_DIR` | Defaults to `.temp/scraper-runs` |
+| `FIRECRAWL_JOB_TIMEOUT_MS` | |
+| `CLOUDFLARE_CRAWL_JOB_TIMEOUT_MS` | |
+| `CLOUDFLARE_CRAWL_STALL_TIMEOUT_MS` | |
 
-After the scraper service has a Railway URL, set the web service's `SCRAPER_PIPELINE_BASE_URL` to that scraper URL.
+---
+
+## Deployment steps
+
+1. Create a **Neon** project and copy the pooled connection string.
+2. In Railway, create the **web** service from this repo (config: `/railway.json`). Set all required web variables.
+3. In Railway, create the **scraper** service from the same repo (config: `/railway.scraper.json`). Set all required scraper variables.
+4. Copy the scraper service's Railway URL into the web service's `SCRAPER_PIPELINE_BASE_URL`.
+5. On first deploy, `prisma migrate deploy` runs automatically (pre-deploy command in `railway.json`).

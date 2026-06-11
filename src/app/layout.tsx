@@ -6,7 +6,7 @@ import { TRPCReactProvider } from "~/trpc/react";
 
 export const metadata: Metadata = {
   title: "ALT EGO LABS",
-  description: "Crawl-backed website assistants with source-grounded answers.",
+  description: "Give your website an Ego Layer",
   icons: [{ rel: "icon", url: "/favicon.ico" }],
 };
 

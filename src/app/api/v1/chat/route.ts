@@ -122,6 +122,12 @@ export async function POST(req: NextRequest) {
       let sources: { title: string; url: string; score: number }[] = [];
       const turnStartMs = Date.now();
       let firstTokenAtMs: number | null = null;
+      // Retrieval is modeled as its own Langfuse span (queries in -> ranked
+      // chunks out) so the agent's RAG step is inspectable on its own, not just
+      // buried in debug events.
+      let retrievalSpan: any = null;
+      let retrievalSummary: Record<string, unknown> | null = null;
+      let retrievalChunks: Array<Record<string, unknown>> = [];
 
       const span =
         trace?.span?.({
@@ -192,6 +198,27 @@ export async function POST(req: NextRequest) {
               metadata: { reason: event.reason ?? null },
             });
           } else if (event.type === "debug") {
+            if (event.stage === "plan_queries") {
+              retrievalSpan =
+                span?.span?.({
+                  name: "retrieval",
+                  input: {
+                    queries: event.data.queries,
+                    plannedQueries: event.data.plannedQueries,
+                  },
+                  metadata: { allowedTopics: event.data.allowedTopics },
+                }) ?? null;
+            } else if (event.stage === "retrieval") {
+              retrievalSummary = event.data;
+            } else if (event.stage === "retrieved_chunks") {
+              retrievalChunks =
+                (event.data.chunks as Array<Record<string, unknown>>) ?? [];
+              retrievalSpan?.end?.({
+                output: { chunks: retrievalChunks },
+                metadata: retrievalSummary ?? {},
+              });
+              retrievalSpan = null;
+            }
             span?.event?.({
               name: event.stage,
               level: "DEBUG",
@@ -215,7 +242,11 @@ export async function POST(req: NextRequest) {
         } as never);
       } finally {
         // Only surface sources that the model actually referenced by page title.
+        const sourcesCountBeforeFilter = sources.length;
         const usedSources = sources.length ? filterSourcesByUsage(fullResponse, sources) : [];
+        const usedSourcesCount = usedSources.length;
+        // Defensive: close the retrieval span if a stream error skipped its end.
+        retrievalSpan?.end?.({ metadata: retrievalSummary ?? {} });
         if (usedSources.length) {
           send(JSON.stringify({ type: "sources", sources: usedSources }));
           sources = usedSources;
@@ -259,6 +290,43 @@ export async function POST(req: NextRequest) {
             timeToFirstToken: ttftSec,
           },
         } as never);
+
+        // Per-turn online eval scores. These let you slice agent quality per
+        // widget in Langfuse and — via `rerank_active` — catch the reranker
+        // silently degrading when its provider quota is exhausted.
+        if (langfuse && trace) {
+          const finalChunkCount = retrievalChunks.length;
+          const topScore = retrievalChunks.reduce((max, c) => {
+            const s =
+              typeof c.rerankScore === "number"
+                ? c.rerankScore
+                : typeof c.rrfScore === "number"
+                  ? c.rrfScore
+                  : 0;
+            return Math.max(max, s);
+          }, 0);
+          const rerankObj =
+            retrievalSummary && typeof retrievalSummary.rerank === "object"
+              ? (retrievalSummary.rerank as { enabled?: boolean })
+              : null;
+          const citationUsage =
+            sourcesCountBeforeFilter > 0
+              ? usedSourcesCount / sourcesCountBeforeFilter
+              : 0;
+          const observationId = (generation as { id?: string } | null)?.id;
+          const score = (name: string, value: number) =>
+            langfuse.score({ traceId: trace.id, observationId, name, value });
+          // Did retrieval return any grounding context at all?
+          score("retrieval_chunk_count", finalChunkCount);
+          // Strength of the best chunk (rerank score, or RRF score in fallback).
+          score("context_top_score", Math.round(topScore * 1000) / 1000);
+          // 1 when the cross-encoder reranker ran, 0 when it fell back to RRF.
+          score("rerank_active", rerankObj?.enabled ? 1 : 0);
+          // Fraction of surfaced sources the model actually cited (groundedness proxy).
+          score("citation_usage", Math.round(citationUsage * 100) / 100);
+          // Did the agent produce an answer this turn?
+          score("answered", fullResponse.trim().length > 0 ? 1 : 0);
+        }
         void langfuse?.flushAsync();
 
         // Persist async (fire and forget)

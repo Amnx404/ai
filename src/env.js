@@ -36,6 +36,9 @@ export const env = createEnv({
     FINETUNE_PROMPT: z.string().min(1).optional(),
     WIDGET_JWT_SECRET: z.string().min(1),
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+    // Cloudflare account credentials — used by the embed module (bge-large-en-v1.5).
+    CLOUDFLARE_ACCOUNT_ID: z.string().min(1).optional(),
+    CLOUDFLARE_API_TOKEN: z.string().min(1).optional(),
   },
   client: {},
   runtimeEnv: {
@@ -61,6 +64,8 @@ export const env = createEnv({
     FINETUNE_PROMPT: process.env.FINETUNE_PROMPT,
     WIDGET_JWT_SECRET: process.env.WIDGET_JWT_SECRET,
     NODE_ENV: process.env.NODE_ENV,
+    CLOUDFLARE_ACCOUNT_ID: process.env.CLOUDFLARE_ACCOUNT_ID,
+    CLOUDFLARE_API_TOKEN: process.env.CLOUDFLARE_API_TOKEN,
   },
   skipValidation: !!process.env.SKIP_ENV_VALIDATION,
   emptyStringAsUndefined: true,
