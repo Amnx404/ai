@@ -14,8 +14,7 @@ export const env = createEnv({
     LANGFUSE_BASE_URL: z.string().min(1).optional(),
     LANGFUSE_PROJECT_ID: z.string().min(1).optional(),
     OPENROUTER_API_KEY: z.string().min(1),
-    PINECONE_API_KEY: z.string().min(1),
-    PINECONE_INDEX: z.string().min(1),
+    PINECONE_API_KEY: z.string().min(1).optional(),
     // Optional: Pinecone data-plane host for this index (copied from Pinecone console).
     // When set, we can bypass controller lookup and hit the index endpoint directly.
     PINECONE_INDEX_HOST: z.string().url().optional(),
@@ -53,7 +52,6 @@ export const env = createEnv({
     LANGFUSE_PROJECT_ID: process.env.LANGFUSE_PROJECT_ID,
     OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
     PINECONE_API_KEY: process.env.PINECONE_API_KEY,
-    PINECONE_INDEX: process.env.PINECONE_INDEX,
     PINECONE_INDEX_HOST: process.env.PINECONE_INDEX_HOST,
     PINECONE_EMBED_MODEL: process.env.PINECONE_EMBED_MODEL,
     PINECONE_RERANK_MODEL: process.env.PINECONE_RERANK_MODEL,

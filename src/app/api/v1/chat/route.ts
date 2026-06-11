@@ -3,7 +3,6 @@ import { z } from "zod";
 
 import { db } from "~/server/db";
 import { ragStream } from "~/lib/rag";
-import { resolvePineconeTarget } from "~/lib/pinecone";
 import { env } from "~/env.js";
 import { verifyWidgetToken } from "~/lib/widget-jwt";
 import { getRealIp, rateLimit } from "~/lib/rate-limit";
@@ -82,7 +81,6 @@ export async function POST(req: NextRequest) {
     return sseError(originGate.error, originGate.status, req);
   }
 
-  const pineconeTarget = resolvePineconeTarget(site, env.PINECONE_INDEX);
   const langfuse = getLangfuse();
   // One trace per browser session (sessionId is created by /api/v1/session and stored in sessionStorage).
   // Each message becomes a SPAN inside this trace, with EVENTs for RAG + a GENERATION for the model output.
@@ -95,7 +93,6 @@ export async function POST(req: NextRequest) {
     metadata: {
       siteId,
       origin,
-      pinecone: pineconeTarget,
       modelId: site.modelId,
       temperature: site.temperature,
       allowedTopics: site.allowedTopics,

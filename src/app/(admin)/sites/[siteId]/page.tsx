@@ -457,7 +457,7 @@ export default async function SiteDetailPage({
             ) : (
               <SiteConfigForm
                 site={site}
-                defaultPineconeIndex={env.PINECONE_INDEX}
+                defaultPineconeIndex=""
                 defaultPineconeIndexHost={env.PINECONE_INDEX_HOST ?? ""}
                 internalAppHost={new URL(env.NEXTAUTH_URL).host}
                 initialTab={initialTab}

@@ -5,8 +5,8 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "~/server/auth";
 import { db } from "~/server/db";
 import { replaceKnowledgeChunks } from "~/lib/knowledge-chunks";
-import { embedTextsForIngest } from "~/lib/pinecone-embed";
-import { resolvePineconeTarget, upsertChunksToHost } from "~/lib/pinecone";
+import { embedTextsForIngest } from "~/lib/embed";
+import { resolvePineconeTarget } from "~/lib/pinecone-resolve";
 import { env } from "~/env.js";
 
 const bodySchema = z.object({
@@ -49,45 +49,31 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Site not found" }, { status: 404 });
   }
 
-  const { indexName, namespace, indexHostUrl } = resolvePineconeTarget(
-    site,
-    env.PINECONE_INDEX,
-    env.PINECONE_INDEX_HOST,
-  );
+  const { namespace } = resolvePineconeTarget(site, "", env.PINECONE_INDEX_HOST);
 
-  // Embed in batches of 50
   const BATCH = 50;
-  let upserted = 0;
+  let embedded = 0;
+  const chunksWithEmbeddings: Array<typeof chunks[number] & { embedding: number[] }> = [];
 
   for (let i = 0; i < chunks.length; i += BATCH) {
     const batch = chunks.slice(i, i + BATCH);
     const embeddings = await embedTextsForIngest(batch.map((c) => c.text));
-
-    const vectors = batch.map((c, idx) => ({
-      id: c.id,
-      values: embeddings[idx]!,
-      metadata: {
-        text: c.text,
-        title: c.title ?? "",
-        url: c.url ?? "",
-        siteId,
-        ...(c.metadata as Record<string, string | number | boolean>),
-      },
-    }));
-
-    await upsertChunksToHost(indexName, namespace, vectors, indexHostUrl);
-    upserted += batch.length;
+    for (let j = 0; j < batch.length; j++) {
+      chunksWithEmbeddings.push({ ...batch[j]!, embedding: embeddings[j] ?? [] });
+      embedded++;
+    }
   }
 
   const stored = await replaceKnowledgeChunks({
     siteId,
     namespace,
-    chunks: chunks.map((c) => ({
+    chunks: chunksWithEmbeddings.map((c) => ({
       vectorId: c.id,
       text: c.text,
       title: c.title ?? null,
       url: c.url ?? "",
       source: "manual",
+      embedding: c.embedding,
       metadata: {
         ...((c.metadata ?? {}) as Record<string, string | number | boolean>),
         source: "manual",
@@ -95,5 +81,5 @@ export async function POST(req: NextRequest) {
     })),
   });
 
-  return NextResponse.json({ upserted, namespace, stored: stored.stored });
+  return NextResponse.json({ upserted: embedded, namespace, stored: stored.stored });
 }

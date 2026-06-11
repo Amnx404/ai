@@ -5,10 +5,8 @@ import { searchKnowledgeChunks, searchKnowledgeChunksDense } from "~/lib/knowled
 import { embedText } from "~/lib/embed";
 import {
   rerankChunks,
-  resolvePineconeTarget,
   type RetrievedChunk,
 } from "~/lib/pinecone";
-import { env } from "~/env.js";
 
 const SEARCH_QUERY_LIMIT = 2;
 const DENSE_TOP_K = 12;

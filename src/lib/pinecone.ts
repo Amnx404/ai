@@ -7,6 +7,7 @@ let _pinecone: Pinecone | null = null;
 
 export function getPinecone() {
   if (!_pinecone) {
+    if (!env.PINECONE_API_KEY) throw new Error("PINECONE_API_KEY is not set");
     _pinecone = new Pinecone({ apiKey: env.PINECONE_API_KEY });
   }
   return _pinecone;

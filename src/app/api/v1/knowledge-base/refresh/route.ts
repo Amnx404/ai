@@ -209,7 +209,7 @@ export async function POST(req: NextRequest) {
     site_id: siteId,
     live_prefix: livePrefix,
     text_source: "fine",
-    embed_model: env.PINECONE_EMBED_MODEL ?? "llama-text-embed-v2",
+    embed_model: "perplexity/pplx-embed-v1-0.6b",
     vector_dim: 1024,
   });
   await (db.knowledgeBaseRun.upsert as unknown as (args: any) => Promise<unknown>)({
@@ -293,13 +293,11 @@ export async function POST(req: NextRequest) {
   }
 
   const refreshedSite = await db.site.findUnique({ where: { id: siteId } });
-  const effectiveTarget = refreshedSite
-    ? resolvePineconeTarget(
-        refreshedSite,
-        env.PINECONE_INDEX,
-        env.PINECONE_INDEX_HOST,
-      )
-    : resolvePineconeTarget(site, env.PINECONE_INDEX, env.PINECONE_INDEX_HOST);
+  const effectiveTarget = resolvePineconeTarget(
+    refreshedSite ?? site,
+    "",
+    env.PINECONE_INDEX_HOST,
+  );
 
   return jsonOk({
     ok: true,
