@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
 import {
   CalendarClock,
   ChevronDown,
@@ -12,7 +11,6 @@ import {
   Pencil,
   PlusCircle,
   Trash2,
-  X,
 } from "lucide-react";
 
 import {
@@ -521,9 +519,9 @@ export function SiteConfigKnowledgeTab({
   const [editingSourceGroupIndex, setEditingSourceGroupIndex] = useState<number | null>(null);
   const [editingSourceGroup, setEditingSourceGroup] =
     useState<SourceGroupDraft>(EMPTY_NEW_SOURCE_GROUP);
+  const [readerSettingsOpen, setReaderSettingsOpen] = useState(false);
   const [advancedConfigOpen, setAdvancedConfigOpen] = useState(false);
   const [runScope, setRunScope] = useState<SourceRunScope>("all");
-  const [runConfirmOpen, setRunConfirmOpen] = useState(false);
 
   const kbBootstrapSeq = useRef(0);
   const kbStartInFlightRef = useRef(false);
@@ -692,7 +690,6 @@ export function SiteConfigKnowledgeTab({
     kbStartInFlightRef.current = true;
     const startSeq = ++kbStartSeqRef.current;
 
-    setRunConfirmOpen(false);
     setKbError("");
     setKbErrorPhase(null);
     setKbPipelineStatus("");
@@ -742,6 +739,17 @@ export function SiteConfigKnowledgeTab({
         } catch {
           // ignore; polling will retry
         }
+      }
+    } catch (e: any) {
+      if (kbStartSeqRef.current === startSeq) {
+        const message =
+          typeof e?.message === "string" && e.message.trim()
+            ? e.message
+            : "Failed to start page reading.";
+        setKbPipelineStatus("failed");
+        setKbStep("error");
+        setKbErrorPhase("scrape");
+        setKbError(message);
       }
     } finally {
       if (kbStartSeqRef.current === startSeq) {
@@ -851,78 +859,25 @@ export function SiteConfigKnowledgeTab({
     runScope === "live" ? "Live pages" : runScope === "core" ? "Core knowledge" : "All knowledge";
   const effectiveRunScopeLabel = enabledSourceGroups.length ? runScopeLabel : "Knowledge";
   const effectiveRunSeedCount = enabledSourceGroups.length ? scopedRunSeedCount : seedCount;
-  const effectiveRunPageCap =
-    scopedRunPageBudget > 0 ? `${scopedRunPageBudget} pages` : labelForCoverage(form.scrapeCoverage);
-  const effectiveRunDepth =
-    enabledSourceGroups.length && scopedRunGroups.some((group) => typeof group.maxDepth === "number")
-      ? `Depth up to ${scopedRunGroups.reduce(
-          (max, group) =>
-            typeof group.maxDepth === "number" && group.maxDepth > max ? group.maxDepth : max,
-          0,
-        )}`
-      : `Depth ${form.scrapeMaxDepth || "0"}`;
-  const effectiveRunReader =
-    form.scrapeProvider === "cloudflare"
-      ? `${labelForRenderMode(form.scrapeCloudflareRenderMode)} · ${labelForDiscoveryMode(
-          form.scrapeCloudflareDiscoveryMode,
-        )}`
-      : "Firecrawl fallback";
   const sourceRunScopeCards = useMemo(() => {
-    const detailsFor = (groups: SourceGroupSummary[]) => {
-      const pageBudget = groups.reduce(
-        (sum, group) => sum + (typeof group.maxPages === "number" ? group.maxPages : 0),
-        0,
-      );
-      const seedTotal = groups.reduce((sum, group) => sum + group.seeds, 0);
-      const depth = groups.reduce(
-        (max, group) =>
-          typeof group.maxDepth === "number" && group.maxDepth > max ? group.maxDepth : max,
-        0,
-      );
-      const liveCount = groups.filter((group) => group.live).length;
-      const browserCount = groups.filter((group) => group.renderMode === "browser").length;
-      const autoCount = groups.filter((group) => group.renderMode === "auto").length;
-      const staticCount = groups.filter((group) => group.renderMode === "static").length;
-      const reader =
-        browserCount > 0
-          ? "Browser-heavy"
-          : autoCount > 0
-            ? "Auto rendering"
-            : staticCount > 0
-              ? "Static fetch"
-              : "Default reader";
-
-      return {
-        groupTotal: groups.length,
-        seedTotal,
-        pageBudget,
-        depth,
-        liveCount,
-        reader,
-      };
-    };
-
     return [
       {
         scope: "all" as const,
         label: "All knowledge",
-        helper: "Rebuild every enabled group.",
+        groupTotal: enabledSourceGroups.length,
         disabled: enabledSourceGroups.length === 0,
-        ...detailsFor(enabledSourceGroups),
       },
       {
         scope: "core" as const,
         label: "Core knowledge",
-        helper: "Stable docs and website groups.",
+        groupTotal: coreSourceGroups.length,
         disabled: coreSourceGroups.length === 0,
-        ...detailsFor(coreSourceGroups),
       },
       {
         scope: "live" as const,
         label: "Live pages",
-        helper: "Scheduled race and event pages.",
+        groupTotal: scheduledSourceGroups.length,
         disabled: scheduledSourceGroups.length === 0,
-        ...detailsFor(scheduledSourceGroups),
       },
     ];
   }, [coreSourceGroups, enabledSourceGroups, scheduledSourceGroups]);
@@ -966,8 +921,6 @@ export function SiteConfigKnowledgeTab({
     editingGroupStats.seedUrls.length > 0 &&
     editingGroupStats.invalidUrls.length === 0 &&
     !sourceGroupRecords.error;
-  const selectedRunScopeCard =
-    sourceRunScopeCards.find((card) => card.scope === runScope) ?? sourceRunScopeCards[0];
   const sourceSetupWarnings = useMemo(() => {
     const warnings: string[] = [];
     if (sourceGroupSummary.error) {
@@ -1256,39 +1209,34 @@ export function SiteConfigKnowledgeTab({
 
                 <div className="flex flex-col gap-2 sm:items-end">
                   {enabledSourceGroups.length ? (
-                    <div className="w-full rounded-lg border border-gray-200 bg-gray-50 p-3 sm:w-[22rem]">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-xs font-semibold uppercase text-gray-500">
-                            Selected run
-                          </p>
-                          <p className="mt-1 truncate text-sm font-semibold text-gray-900">
-                            {effectiveRunScopeLabel}
-                          </p>
-                          <p className="mt-1 text-xs leading-5 text-gray-500">
-                            Choose a different run area below.
-                          </p>
-                        </div>
-                        <span className="shrink-0 rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-600">
-                          {countLabel(selectedRunScopeCard.groupTotal, "group", "groups")}
-                        </span>
-                      </div>
-                      <div className="mt-3 grid grid-cols-3 gap-1.5 text-[11px]">
-                        {[
-                          countLabel(scopedRunSeedCount, "start page", "start pages"),
-                          scopedRunPageBudget > 0 ? `${scopedRunPageBudget} page cap` : "Preset cap",
-                          effectiveRunDepth,
-                        ].map((item) => (
-                          <span
-                            key={item}
-                            className="truncate rounded-lg border border-gray-200 bg-white px-2 py-1 font-semibold text-gray-600"
-                          >
-                            {item}
-                          </span>
-                        ))}
-                        <span className="col-span-3 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-left font-semibold leading-4 text-gray-600">
-                          {effectiveRunReader}
-                        </span>
+                    <div className="w-full sm:w-[22rem]">
+                      <p className="mb-1 text-xs font-semibold uppercase text-gray-500">
+                        Run scope
+                      </p>
+                      <div className="grid grid-cols-3 gap-1 rounded-lg border border-gray-200 bg-gray-50 p-1">
+                        {sourceRunScopeCards.map((card) => {
+                          const active = runScope === card.scope;
+                          return (
+                            <button
+                              key={card.scope}
+                              type="button"
+                              onClick={() => setRunScope(card.scope)}
+                              disabled={card.disabled || isKbPolling || kbStarting}
+                              aria-pressed={active}
+                              className={cn(
+                                "min-h-10 rounded-md px-2 py-1.5 text-center text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-45",
+                                active
+                                  ? "bg-white text-gray-950 shadow-sm ring-1 ring-gray-200"
+                                  : "text-gray-600 hover:bg-white/70 hover:text-gray-900",
+                              )}
+                            >
+                              <span className="block truncate">{card.label}</span>
+                              <span className="block truncate font-medium text-gray-400">
+                                {countLabel(card.groupTotal, "group", "groups")}
+                              </span>
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   ) : null}
@@ -1297,11 +1245,9 @@ export function SiteConfigKnowledgeTab({
                       type="button"
                       onClick={() => {
                         if (sourceRunBlockedReason) return;
-                        setRunConfirmOpen(true);
+                        void runKbPipeline();
                       }}
                       disabled={isKbPolling || kbLoading || kbStarting || Boolean(sourceRunBlockedReason)}
-                      aria-haspopup="dialog"
-                      aria-controls="source-run-confirm"
                       className="rounded-lg bg-gray-950 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-gray-800 disabled:opacity-60"
                     >
                       {primaryLabel}
@@ -1335,112 +1281,6 @@ export function SiteConfigKnowledgeTab({
                   </p>
                 </div>
               </div>
-
-              <Dialog.Root open={runConfirmOpen && !isKbPolling} onOpenChange={setRunConfirmOpen}>
-                <Dialog.Portal>
-                  <Dialog.Overlay className="fixed inset-0 z-50 bg-gray-950/35 backdrop-blur-sm" />
-                  <Dialog.Content
-                    id="source-run-confirm"
-                    className="fixed left-1/2 top-1/2 z-[60] max-h-[calc(100vh-3rem)] w-[min(42rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-amber-200 bg-amber-50 p-5 text-left shadow-2xl focus:outline-none"
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0">
-                        <Dialog.Title className="text-base font-semibold text-amber-950">
-                          Start reading {effectiveRunScopeLabel.toLowerCase()}?
-                        </Dialog.Title>
-                        <Dialog.Description className="mt-1 text-sm leading-6 text-amber-900/80">
-                          This queues a crawler run, cleans the pages, and writes a new searchable
-                          knowledge index when it finishes.
-                        </Dialog.Description>
-                      </div>
-                      <Dialog.Close asChild>
-                        <button
-                          type="button"
-                          aria-label="Close"
-                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-amber-200 bg-white/70 text-amber-900 hover:bg-white"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </Dialog.Close>
-                    </div>
-                    <dl className="mt-4 grid gap-2 sm:grid-cols-2">
-                      {[
-                        {
-                          label: "Scope",
-                          value: effectiveRunScopeLabel,
-                        },
-                        {
-                          label: "Start pages",
-                          value: countLabel(effectiveRunSeedCount, "page", "pages"),
-                        },
-                        {
-                          label: "Page cap",
-                          value: effectiveRunPageCap,
-                        },
-                        {
-                          label: "Depth",
-                          value: effectiveRunDepth,
-                        },
-                      ].map((item) => (
-                        <div key={item.label} className="rounded-lg bg-white/75 px-3 py-2">
-                          <dt className="text-[11px] font-semibold uppercase text-amber-800/70">
-                            {item.label}
-                          </dt>
-                          <dd className="mt-0.5 truncate text-sm font-semibold text-amber-950">
-                            {item.value}
-                          </dd>
-                        </div>
-                      ))}
-                    </dl>
-                    <div className="mt-2 rounded-lg bg-white/75 px-3 py-2">
-                      <p className="text-[11px] font-semibold uppercase text-amber-800/70">
-                        Reader
-                      </p>
-                      <p className="mt-0.5 text-sm font-semibold text-amber-950">
-                        {effectiveRunReader}
-                      </p>
-                    </div>
-                    <div className="mt-2 rounded-lg border border-amber-200 bg-white/75 px-3 py-2 text-sm leading-6 text-amber-950">
-                      <p className="font-semibold">What will happen</p>
-                      <p className="mt-0.5 text-amber-900/80">
-                        This run will start from{" "}
-                        {countLabel(effectiveRunSeedCount, "page", "pages")} and may store up to{" "}
-                        {selectedRunScopeCard.pageBudget > 0
-                          ? `${selectedRunScopeCard.pageBudget} pages`
-                          : effectiveRunPageCap}{" "}
-                        before cleaning and indexing.
-                        {selectedRunScopeCard.liveCount > 0
-                          ? ` It includes ${countLabel(
-                              selectedRunScopeCard.liveCount,
-                              "scheduled group",
-                              "scheduled groups",
-                            )}, so refreshed live-page content can replace stale event answers.`
-                          : " It only updates manually selected knowledge groups."}
-                      </p>
-                    </div>
-                    <div className="mt-4 flex justify-end gap-2">
-                      <Dialog.Close asChild>
-                        <button
-                          type="button"
-                          className="rounded-lg border border-amber-200 bg-white/80 px-4 py-2 text-sm font-semibold text-amber-950 hover:bg-white"
-                        >
-                          Cancel
-                        </button>
-                      </Dialog.Close>
-                      <button
-                        type="button"
-                        onClick={() => void runKbPipeline()}
-                        disabled={kbStarting}
-                        className="inline-flex items-center justify-center rounded-lg bg-gray-950 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-gray-800 disabled:opacity-60"
-                      >
-                        {kbStarting
-                          ? "Starting…"
-                          : `Start reading ${effectiveRunScopeLabel.toLowerCase()}`}
-                      </button>
-                    </div>
-                  </Dialog.Content>
-                </Dialog.Portal>
-              </Dialog.Root>
 
               <div className="border-y border-gray-200 py-3">
                 <div className="grid gap-3 sm:grid-cols-3">
@@ -1501,6 +1341,60 @@ export function SiteConfigKnowledgeTab({
                 </div>
               </div>
 
+              <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 px-3 py-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-semibold text-gray-900">Reading status</h3>
+                    <p className="mt-0.5 text-xs text-gray-500">
+                      Reads pages, cleans text, then writes the searchable index.
+                    </p>
+                  </div>
+                  {kbPipelineStatus ? (
+                    <span className="w-fit rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-semibold capitalize text-gray-700">
+                      {kbPipelineStatus.replace(/_/g, " ")}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  <ProgressStep
+                    label="Reading"
+                    state={
+                      kbStep === "error" && kbErrorPhase === "scrape"
+                        ? "failed"
+                        : kbStep === "scrape"
+                          ? "in_progress"
+                          : kbStep === "prepare" || kbStep === "upload" || kbStep === "done"
+                            ? "done"
+                            : "not_started"
+                    }
+                  />
+                  <ProgressStep
+                    label="Cleaning"
+                    state={
+                      kbStep === "error" && kbErrorPhase === "prepare"
+                        ? "failed"
+                        : kbStep === "prepare"
+                          ? "in_progress"
+                          : kbStep === "upload" || kbStep === "done"
+                            ? "done"
+                            : "not_started"
+                    }
+                  />
+                  <ProgressStep
+                    label="Indexing"
+                    state={
+                      kbStep === "error" && kbErrorPhase === "upload"
+                        ? "failed"
+                        : kbStep === "upload"
+                          ? "in_progress"
+                          : kbStep === "done"
+                            ? "done"
+                            : "not_started"
+                    }
+                  />
+                </div>
+              </div>
+
               {sourceSetupWarnings.length ? (
                 <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1525,91 +1419,15 @@ export function SiteConfigKnowledgeTab({
                 </div>
               ) : null}
 
-              {enabledSourceGroups.length ? (
-                <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
-                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p className="text-sm font-semibold text-gray-900">Run choices</p>
-                      <p className="mt-0.5 text-xs text-gray-500">
-                        Pick one run area, then use the start button above to confirm the run.
-                      </p>
-                    </div>
-                    <span className="w-fit rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-600">
-                      Selected: {effectiveRunScopeLabel}
-                    </span>
-                  </div>
-                  <div className="mt-3 grid gap-2 lg:grid-cols-3">
-                    {sourceRunScopeCards.map((card) => {
-                      const active = runScope === card.scope;
-                      const capLabel =
-                        card.pageBudget > 0 ? `${card.pageBudget} pages` : "Preset cap";
-                      const depthLabel = card.depth > 0 ? `Depth ${card.depth}` : "Default depth";
-                      return (
-                        <button
-                          key={card.scope}
-                          type="button"
-                          onClick={() => setRunScope(card.scope)}
-                          disabled={card.disabled || isKbPolling || kbStarting}
-                          aria-pressed={active}
-                          className={cn(
-                            "min-h-[9.5rem] rounded-lg border px-3 py-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-45",
-                            active
-                              ? "border-gray-900 bg-white shadow-sm ring-1 ring-gray-900/10"
-                              : "border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50",
-                          )}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <p className="text-sm font-semibold text-gray-900">{card.label}</p>
-                              <p className="mt-1 text-xs leading-5 text-gray-500">
-                                {card.helper}
-                              </p>
-                            </div>
-                            <span
-                              className={cn(
-                                "shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold",
-                                active
-                                  ? "border-gray-900 bg-gray-900 text-white"
-                                  : "border-gray-200 bg-gray-50 text-gray-600",
-                              )}
-                            >
-                              {countLabel(card.groupTotal, "group", "groups")}
-                            </span>
-                          </div>
-                          <div className="mt-3 grid grid-cols-2 gap-1.5 text-[11px]">
-                            {[
-                              countLabel(card.seedTotal, "start page", "start pages"),
-                              capLabel,
-                              depthLabel,
-                              card.reader,
-                            ].map((item) => (
-                              <span
-                                key={item}
-                                className="truncate rounded-lg border border-gray-200 bg-gray-50 px-2 py-1 font-semibold text-gray-600"
-                              >
-                                {item}
-                              </span>
-                            ))}
-                          </div>
-                          {card.liveCount > 0 ? (
-                            <p className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[11px] font-semibold text-emerald-800">
-                              Includes {countLabel(card.liveCount, "scheduled group", "scheduled groups")}
-                            </p>
-                          ) : null}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : null}
-
               <div className="mt-5 space-y-6">
                 <section>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <h3 className="text-sm font-semibold text-gray-900">Knowledge plan</h3>
+                      <h3 className="text-sm font-semibold text-gray-900">Sources</h3>
                       <p className="mt-1 text-xs text-gray-500">
-                        Create groups for static docs, dynamic pages, and live event pages. Each group gets its own boundaries, depth, page cap, and update cadence.
+                        {enabledSourceGroups.length
+                          ? `${countLabel(enabledSourceGroups.length, "group", "groups")} configured`
+                          : "Simple page list"}
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-2 sm:justify-end">
@@ -1623,31 +1441,6 @@ export function SiteConfigKnowledgeTab({
                         Add knowledge group
                       </button>
                     </div>
-                  </div>
-
-                  <div className="mt-3 grid gap-2 lg:grid-cols-3">
-                    {[
-                      {
-                        title: "1. Start pages",
-                        body: "Open these exact pages first. Use docs roots, course portals, event pages, or GitHub docs entry points.",
-                      },
-                      {
-                        title: "2. Allowed link areas",
-                        body: "Keep discovered links inside these URL prefixes so crawls do not drift into unrelated pages.",
-                      },
-                      {
-                        title: "3. Update mode",
-                        body: "Static docs can stay manual. Live pages can update every day or week on their own schedule.",
-                      },
-                    ].map((item) => (
-                      <div
-                        key={item.title}
-                        className="rounded-lg border border-blue-100 bg-blue-50/70 px-3 py-2"
-                      >
-                        <p className="text-xs font-semibold text-blue-950">{item.title}</p>
-                        <p className="mt-1 text-xs leading-5 text-blue-900/80">{item.body}</p>
-                      </div>
-                    ))}
                   </div>
 
                   <div className="mt-3">
@@ -1704,18 +1497,6 @@ export function SiteConfigKnowledgeTab({
                                     First start page: {compactUrl(group.firstSeed)}
                                 </p>
                               ) : null}
-                              {group.renderMode || group.discoveryMode ? (
-                                <p className="mt-1 text-xs text-gray-500">
-                                  Reader:{" "}
-                                  {group.renderMode
-                                    ? labelForRenderMode(group.renderMode)
-                                    : "Default render"}{" "}
-                                  ·{" "}
-                                  {group.discoveryMode
-                                    ? labelForDiscoveryMode(group.discoveryMode)
-                                    : "Default discovery"}
-                                </p>
-                              ) : null}
                             </div>
                               <div className="flex shrink-0 flex-wrap gap-1.5">
                                 <button
@@ -1757,53 +1538,20 @@ export function SiteConfigKnowledgeTab({
                                 </button>
                               </div>
                             </div>
-                            <dl className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
-                              {[
-                                {
-                                  label: "Start pages",
-                                  value: countLabel(group.seeds, "page", "pages"),
-                                },
-                                {
-                                  label: "Allowed link areas",
-                                  value: countLabel(group.prefixes, "area", "areas"),
-                                },
-                                {
-                                  label: "Page cap",
-                                  value:
-                                    group.maxPages !== null
-                                      ? `${group.maxPages} pages`
-                                      : "Uses global setting",
-                                },
-                                {
-                                  label: "Depth",
-                                  value:
-                                    group.maxDepth !== null
-                                      ? `Up to ${group.maxDepth}`
-                                      : "Uses global setting",
-                                },
-                                {
-                                  label: "Update mode",
-                                  value: sourceGroupUpdateLabel(group),
-                                },
-                              ].map((item) => (
-                                <div
-                                  key={item.label}
-                                  className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2"
-                                >
-                                  <dt className="text-[11px] font-semibold uppercase text-gray-500">
-                                    {item.label}
-                                  </dt>
-                                  <dd className="mt-0.5 text-sm font-semibold text-gray-900">
-                                    {item.value}
-                                  </dd>
-                                </div>
-                              ))}
-                            </dl>
-                            <details className="group mt-3 rounded-lg border border-gray-200 bg-gray-50">
+                            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+                              <span>{countLabel(group.seeds, "start page", "start pages")}</span>
+                              <span>{countLabel(group.prefixes, "allowed area", "allowed areas")}</span>
+                              <span>
+                                {group.maxPages !== null ? `${group.maxPages} page cap` : "Global page cap"}
+                              </span>
+                              <span>
+                                {group.maxDepth !== null ? `Depth ${group.maxDepth}` : "Global depth"}
+                              </span>
+                              <span>{sourceGroupUpdateLabel(group)}</span>
+                            </div>
+                            <details className="group mt-2 rounded-lg border border-gray-200 bg-gray-50">
                               <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-semibold text-gray-700 marker:hidden hover:bg-gray-100">
-                                <span className="min-w-0 truncate">
-                                  View start pages and allowed link areas
-                                </span>
+                                <span className="min-w-0 truncate">URLs</span>
                                 <ChevronDown
                                   className="h-4 w-4 shrink-0 text-gray-500 transition-transform group-open:rotate-180"
                                   aria-hidden
@@ -1811,11 +1559,7 @@ export function SiteConfigKnowledgeTab({
                               </summary>
                               <div className="border-t border-gray-200 p-3">
                                 <div className="grid gap-3 xl:grid-cols-2">
-                                  <SourceGroupUrlList
-                                    title="Start pages"
-                                    urls={group.seedUrls}
-                                    link
-                                  />
+                                  <SourceGroupUrlList title="Start pages" urls={group.seedUrls} link />
                                   <SourceGroupUrlList
                                     title="Allowed link areas"
                                     urls={group.allowedPrefixes}
@@ -1862,7 +1606,7 @@ export function SiteConfigKnowledgeTab({
                                     <p className="mb-1 text-sm font-medium text-gray-700">
                                       Group type
                                     </p>
-                                    <div className="grid gap-2 lg:grid-cols-3">
+                                    <div className="grid gap-1 rounded-lg border border-gray-200 bg-gray-50 p-1 sm:grid-cols-3">
                                       {SOURCE_GROUP_TEMPLATES.map((template) => {
                                         const Icon = template.Icon;
                                         const active = editingSourceGroup.kind === template.kind;
@@ -1881,31 +1625,21 @@ export function SiteConfigKnowledgeTab({
                                               }))
                                             }
                                             className={cn(
-                                              "min-h-[5.75rem] rounded-lg border px-3 py-2.5 text-left transition-colors",
+                                              "inline-flex min-h-10 items-center justify-center gap-2 rounded-md px-2 py-2 text-center text-xs font-semibold transition-colors",
                                               active
-                                                ? "border-gray-900 bg-gray-900 text-white shadow-sm"
-                                                : "border-gray-200 bg-gray-50 text-gray-700 hover:border-gray-300 hover:bg-white",
+                                                ? "bg-white text-gray-950 shadow-sm ring-1 ring-gray-200"
+                                                : "text-gray-600 hover:bg-white/70 hover:text-gray-900",
                                             )}
                                             aria-pressed={active}
                                           >
-                                            <span className="flex items-center gap-2 text-sm font-semibold">
-                                              <Icon
-                                                className={cn(
-                                                  "h-4 w-4",
-                                                  active ? "text-white" : "text-gray-500",
-                                                )}
-                                                aria-hidden
-                                              />
-                                              {template.label}
-                                            </span>
-                                            <span
+                                            <Icon
                                               className={cn(
-                                                "mt-1.5 block text-xs leading-5",
-                                                active ? "text-white/80" : "text-gray-500",
+                                                "h-4 w-4 shrink-0",
+                                                active ? "text-gray-950" : "text-gray-500",
                                               )}
-                                            >
-                                              {template.body}
-                                            </span>
+                                              aria-hidden
+                                            />
+                                            <span className="truncate">{template.label}</span>
                                           </button>
                                         );
                                       })}
@@ -2031,61 +1765,6 @@ export function SiteConfigKnowledgeTab({
                                       : "."}
                                   </div>
                                 ) : null}
-
-                                <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-3">
-                                  <p className="text-xs font-semibold uppercase text-gray-500">
-                                    Edit preview
-                                  </p>
-                                  <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
-                                    {[
-                                      {
-                                        label: "Start pages",
-                                        value: countLabel(editingGroupStats.seedUrls.length, "page", "pages"),
-                                      },
-                                      {
-                                        label: "Allowed link areas",
-                                        value: countLabel(
-                                          editingGroupStats.allowedScopes.length,
-                                          "area",
-                                          "areas",
-                                        ),
-                                      },
-                                      {
-                                        label: "Page cap",
-                                        value:
-                                          editingGroupStats.maxPages === null
-                                            ? "Global default"
-                                            : `${editingGroupStats.maxPages} pages`,
-                                      },
-                                      {
-                                        label: "Mode",
-                                        value: selectedEditingSourceGroupTemplate.live
-                                          ? editingGroupStats.refreshMinutes === null
-                                            ? "Scheduled"
-                                            : formatRefreshInterval(editingGroupStats.refreshMinutes)
-                                          : "Manual run",
-                                      },
-                                      {
-                                        label: "Reader",
-                                        value: labelForRenderMode(
-                                          selectedEditingSourceGroupTemplate.renderMode,
-                                        ),
-                                      },
-                                    ].map((item) => (
-                                      <div
-                                        key={item.label}
-                                        className="rounded-lg border border-gray-200 bg-white px-2 py-2"
-                                      >
-                                        <p className="text-[11px] font-semibold text-gray-500">
-                                          {item.label}
-                                        </p>
-                                        <p className="mt-0.5 truncate text-xs font-semibold text-gray-900">
-                                          {item.value}
-                                        </p>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
 
                                 <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                                   <p className="text-xs text-gray-500">
@@ -2229,7 +1908,7 @@ export function SiteConfigKnowledgeTab({
                               <p className="mb-1 text-sm font-medium text-gray-700">
                                 Group type
                               </p>
-                              <div className="grid gap-2 lg:grid-cols-3">
+                              <div className="grid gap-1 rounded-lg border border-gray-200 bg-gray-50 p-1 sm:grid-cols-3">
                                 {SOURCE_GROUP_TEMPLATES.map((template) => {
                                   const Icon = template.Icon;
                                   const active = newSourceGroup.kind === template.kind;
@@ -2239,31 +1918,21 @@ export function SiteConfigKnowledgeTab({
                                       type="button"
                                       onClick={() => applySourceGroupTemplate(template.kind)}
                                       className={cn(
-                                        "min-h-[7rem] rounded-lg border px-3 py-3 text-left transition-colors",
+                                        "inline-flex min-h-10 items-center justify-center gap-2 rounded-md px-2 py-2 text-center text-xs font-semibold transition-colors",
                                         active
-                                          ? "border-gray-900 bg-gray-900 text-white shadow-sm"
-                                          : "border-gray-200 bg-gray-50 text-gray-700 hover:border-gray-300 hover:bg-white",
+                                          ? "bg-white text-gray-950 shadow-sm ring-1 ring-gray-200"
+                                          : "text-gray-600 hover:bg-white/70 hover:text-gray-900",
                                       )}
                                       aria-pressed={active}
                                     >
-                                      <span className="flex items-center gap-2 text-sm font-semibold">
-                                        <Icon
-                                          className={cn(
-                                            "h-4 w-4",
-                                            active ? "text-white" : "text-gray-500",
-                                          )}
-                                          aria-hidden
-                                        />
-                                        {template.label}
-                                      </span>
-                                      <span
+                                      <Icon
                                         className={cn(
-                                          "mt-2 block text-xs leading-5",
-                                          active ? "text-white/80" : "text-gray-500",
+                                          "h-4 w-4 shrink-0",
+                                          active ? "text-gray-950" : "text-gray-500",
                                         )}
-                                      >
-                                        {template.body}
-                                      </span>
+                                        aria-hidden
+                                      />
+                                      <span className="truncate">{template.label}</span>
                                     </button>
                                   );
                                 })}
@@ -2381,58 +2050,6 @@ export function SiteConfigKnowledgeTab({
                                   : "."}
                               </div>
                             ) : null}
-                            <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-3 lg:col-span-2">
-                              <p className="text-xs font-semibold uppercase text-gray-500">
-                                Group preview
-                              </p>
-                              <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-                                {[
-                                  {
-                                    label: "Start pages",
-                                    value: countLabel(newGroupStats.seedUrls.length, "page", "pages"),
-                                  },
-                                  {
-                                    label: "Allowed link areas",
-                                    value: countLabel(
-                                      newGroupStats.allowedScopes.length,
-                                      "area",
-                                      "areas",
-                                    ),
-                                  },
-                                  {
-                                    label: "Page cap",
-                                    value:
-                                      newGroupStats.maxPages === null
-                                        ? "Global default"
-                                        : `${newGroupStats.maxPages} pages`,
-                                  },
-                                  {
-                                    label: "Mode",
-                                    value: selectedSourceGroupTemplate.live
-                                      ? newGroupStats.refreshMinutes === null
-                                        ? "Scheduled"
-                                        : formatRefreshInterval(newGroupStats.refreshMinutes)
-                                      : "Manual run",
-                                  },
-                                  {
-                                    label: "Reader",
-                                    value: labelForRenderMode(selectedSourceGroupTemplate.renderMode),
-                                  },
-                                ].map((item) => (
-                                  <div
-                                    key={item.label}
-                                    className="rounded-lg border border-gray-200 bg-white px-2 py-2"
-                                  >
-                                    <p className="text-[11px] font-semibold text-gray-500">
-                                      {item.label}
-                                    </p>
-                                    <p className="mt-0.5 truncate text-xs font-semibold text-gray-900">
-                                      {item.value}
-                                    </p>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
                           </div>
                           <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                             <p className="text-xs text-gray-500">
@@ -2485,15 +2102,32 @@ export function SiteConfigKnowledgeTab({
                   </div>
                 </section>
 
-                <section className="border-t border-gray-200 pt-5">
-                  <div>
-                    <h3 className="text-sm font-semibold text-gray-900">Reading settings</h3>
-                    <p className="mt-1 text-xs text-gray-500">
-                      Choose the reader, rendering strategy, page budget, speed, and defaults for groups that do not set their own limits.
-                    </p>
-                  </div>
+                <Collapsible
+                  open={readerSettingsOpen}
+                  onOpenChange={setReaderSettingsOpen}
+                  className="border-t border-gray-200 pt-5"
+                >
+                  <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-left hover:bg-gray-100">
+                    <div className="min-w-0">
+                      <h3 className="text-sm font-semibold text-gray-900">Reader and limits</h3>
+                      <p className="mt-0.5 truncate text-xs text-gray-500">
+                        {form.scrapeProvider === "cloudflare"
+                          ? `${labelForRenderMode(form.scrapeCloudflareRenderMode)} · ${labelForDiscoveryMode(form.scrapeCloudflareDiscoveryMode)}`
+                          : "Firecrawl fallback"}{" "}
+                        · {groupPageBudget > 0 ? `${groupPageBudget} pages` : labelForCoverage(form.scrapeCoverage)}
+                      </p>
+                    </div>
+                    <ChevronDown
+                      className={cn(
+                        "h-4 w-4 shrink-0 transition-transform",
+                        readerSettingsOpen && "rotate-180",
+                      )}
+                      aria-hidden
+                    />
+                  </CollapsibleTrigger>
 
-                  <div className="mt-3 grid gap-3 lg:grid-cols-3">
+                  <CollapsibleContent className="pt-3 data-[state=closed]:hidden">
+                  <div className="grid gap-3 lg:grid-cols-3">
                     <Field label="Page reader">
                       <select
                         value={form.scrapeProvider}
@@ -2633,7 +2267,8 @@ export function SiteConfigKnowledgeTab({
                       <span>Clean with AI</span>
                     </label>
                   </div>
-                </section>
+                  </CollapsibleContent>
+                </Collapsible>
 
                 <Collapsible
                   open={advancedConfigOpen}
@@ -2677,60 +2312,6 @@ export function SiteConfigKnowledgeTab({
                     </div>
                   </CollapsibleContent>
                 </Collapsible>
-              </div>
-
-              <div className="mt-5 border-t border-gray-200 pt-5">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <h3 className="text-sm font-semibold text-gray-900">Reading status</h3>
-                    <p className="mt-1 text-xs text-gray-500">
-                      The run reads pages, cleans the text, then writes the searchable index.
-                    </p>
-                  </div>
-                  {kbPipelineStatus ? (
-                    <span className="w-fit rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-semibold capitalize text-gray-700">
-                      {kbPipelineStatus.replace(/_/g, " ")}
-                    </span>
-                  ) : null}
-                </div>
-                <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                  <ProgressStep
-                    label="Reading"
-                    state={
-                      kbStep === "error" && kbErrorPhase === "scrape"
-                        ? "failed"
-                        : kbStep === "scrape"
-                          ? "in_progress"
-                          : kbStep === "prepare" || kbStep === "upload" || kbStep === "done"
-                            ? "done"
-                            : "not_started"
-                    }
-                  />
-                  <ProgressStep
-                    label="Cleaning"
-                    state={
-                      kbStep === "error" && kbErrorPhase === "prepare"
-                        ? "failed"
-                        : kbStep === "prepare"
-                          ? "in_progress"
-                          : kbStep === "upload" || kbStep === "done"
-                            ? "done"
-                            : "not_started"
-                    }
-                  />
-                  <ProgressStep
-                    label="Indexing"
-                    state={
-                      kbStep === "error" && kbErrorPhase === "upload"
-                        ? "failed"
-                        : kbStep === "upload"
-                          ? "in_progress"
-                          : kbStep === "done"
-                            ? "done"
-                            : "not_started"
-                    }
-                  />
-                </div>
               </div>
 
               {kbError ? (

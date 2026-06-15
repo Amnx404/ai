@@ -80,15 +80,13 @@ export function resolveScrapeConfigSourceGroups(input: Record<string, unknown>):
 
   if (selectedGroups.length === 0) return input;
 
-  const seedUrls = uniqueStrings([
-    ...stringArray(input.seed_urls),
-    ...selectedGroups.flatMap((group) => {
+  const seedUrls = uniqueStrings(
+    selectedGroups.flatMap((group) => {
       const seeds = group.seed_urls ?? [];
       return seeds.length > 0 ? seeds : group.allowed_prefixes ?? [];
     }),
-  ]);
+  );
   const allowedPrefixes = uniqueStrings([
-    ...stringArray(input.allowed_prefixes),
     ...selectedGroups.flatMap((group) => group.allowed_prefixes ?? []),
     ...selectedGroups.flatMap((group) => group.seed_urls ?? []),
   ]);
