@@ -162,7 +162,7 @@ function expandSearchQueries(messages: ChatMessage[], plannedQueries: string[]) 
   }
 
   if (/\b(visa|invitation letter|support letter|travel document|embassy|consulate)\b/i.test(lastUser)) {
-    expanded.push("ICRA 2026 visa support invitation letter travel documents Austria attendees");
+    expanded.push("ICRA 2026 visa information support invitation letter travel documents Austria attendees");
     expanded.push("ICRA 2026 registration visa support international participants");
   }
 
@@ -787,6 +787,7 @@ function chunkPriority(chunk: RetrievedChunk, query: string) {
   }
 
   if (/\b(visa|invitation letter|support letter|travel document|embassy|consulate)\b/.test(q)) {
+    if (url.includes("2026.ieee-icra.org/attend/visa-information")) score += 110;
     if (url.includes("2026.ieee-icra.org/attend/visa-support")) score += 100;
     if (url.includes("2026.ieee-icra.org/attend/registration")) score += 35;
   }
