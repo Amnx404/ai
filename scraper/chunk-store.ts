@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { Prisma, PrismaClient } from "@prisma/client";
 
 type StoredChunk = {
@@ -10,6 +12,23 @@ type StoredChunk = {
   chunk_index?: number;
   chars?: number;
   embedding?: number[] | null;
+};
+
+type KnowledgeChunkInsertRow = {
+  id: string;
+  siteId: string;
+  namespace: string;
+  vectorId: string;
+  runId: string;
+  url: string;
+  title: string | null;
+  description: string | null;
+  text: string;
+  source: string;
+  pageIndex: number | null;
+  chunkIndex: number | null;
+  chars: number;
+  metadata: Prisma.InputJsonObject;
 };
 
 export async function storeKnowledgeChunks({
@@ -43,9 +62,10 @@ export async function storeKnowledgeChunks({
       const batchSize = 100;
       for (let i = 0; i < chunks.length; i += batchSize) {
         const batch = chunks.slice(i, i + batchSize);
-        const data = batch.map((chunk) => {
+        const data: KnowledgeChunkInsertRow[] = batch.map((chunk) => {
           const text = sanitizeDbText(chunk.text);
           return {
+            id: `kc_${randomUUID()}`,
             siteId: normalizedSiteId,
             namespace,
             vectorId: sanitizeDbText(chunk.id),
@@ -63,27 +83,11 @@ export async function storeKnowledgeChunks({
               source: "scraper",
               page_index: chunk.page_index ?? null,
               chunk_index: chunk.chunk_index ?? null,
-            } satisfies Prisma.InputJsonObject,
+            },
           };
         });
 
-        let inserted = 0;
-        try {
-          const result = await tx.knowledgeChunk.createMany({
-            data,
-            skipDuplicates: true,
-          });
-          inserted = result.count;
-        } catch {
-          for (const row of data) {
-            try {
-              await tx.knowledgeChunk.create({ data: row });
-              inserted++;
-            } catch (error) {
-              if (!isDuplicateError(error)) throw error;
-            }
-          }
-        }
+        const inserted = await insertKnowledgeChunkRows(tx, data);
 
         // Store embeddings via raw SQL — Prisma createMany can't write vector columns.
         const withEmbeddings = batch.filter((c) => c.embedding?.length);
@@ -115,11 +119,49 @@ export async function storeKnowledgeChunks({
 }
 
 function sanitizeDbText(value: string) {
-  return value
-    .replace(/\u0000/g, "")
-    .replace(/\\/g, "/");
+  return value.replace(/\u0000/g, "");
 }
 
-function isDuplicateError(error: unknown) {
-  return Boolean(error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "P2002");
+async function insertKnowledgeChunkRows(tx: Prisma.TransactionClient, rows: KnowledgeChunkInsertRow[]) {
+  if (!rows.length) return 0;
+
+  const values = rows.map((row) => {
+    return Prisma.sql`(
+      ${row.id},
+      ${row.siteId},
+      ${row.namespace},
+      ${row.vectorId},
+      ${row.runId},
+      ${row.url},
+      ${row.title},
+      ${row.description},
+      ${row.text},
+      ${row.source},
+      ${row.pageIndex},
+      ${row.chunkIndex},
+      ${row.chars},
+      ${JSON.stringify(row.metadata)}::jsonb
+    )`;
+  });
+
+  return tx.$executeRaw(Prisma.sql`
+    INSERT INTO "KnowledgeChunk" (
+      "id",
+      "siteId",
+      "namespace",
+      "vectorId",
+      "runId",
+      "url",
+      "title",
+      "description",
+      "text",
+      "source",
+      "page_index",
+      "chunk_index",
+      "chars",
+      "metadata"
+    )
+    VALUES ${Prisma.join(values)}
+    ON CONFLICT ("namespace", "vectorId") DO NOTHING
+  `);
 }
