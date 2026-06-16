@@ -182,8 +182,9 @@ export async function POST(req: NextRequest) {
         for await (const event of ragStream(site, messages)) {
           if (event.type === "token") {
             if (firstTokenAtMs === null) firstTokenAtMs = Date.now();
-            fullResponse += event.content;
-            send(JSON.stringify({ type: "token", content: event.content }));
+            const content = sanitizeAssistantToken(event.content);
+            fullResponse += content;
+            if (content) send(JSON.stringify({ type: "token", content }));
           } else if (event.type === "sources") {
             // Delay emitting sources until the end so we can filter to only those actually referenced.
             sources = event.sources;
@@ -402,4 +403,8 @@ function sseError(message: string, status: number, req: NextRequest) {
       "Access-Control-Allow-Origin": origin,
     },
   });
+}
+
+function sanitizeAssistantToken(content: string) {
+  return content.replace(/[*`]/g, "");
 }

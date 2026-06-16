@@ -140,6 +140,27 @@ function expandSearchQueries(messages: ChatMessage[], plannedQueries: string[]) 
     expanded.push("syllabus lessons modules labs lectures getting started instructor");
   }
 
+  if (/\b(first|1st)\s+lab\b|\blab\s*(one|1)\b/i.test(lastUser)) {
+    expanded.push("lab 1 introduction ROS2 assignment instructions");
+    expanded.push("start here getting started course kit lab 1");
+  }
+
+  if (
+    /\bcourse\s*kit\b/i.test(lastUser) &&
+    /\b(install|setup|start|begin|first|lab)\b/i.test(lastUser)
+  ) {
+    expanded.push("Start Here getting started course kit setup installation");
+    expanded.push("Lab 1 Introduction to ROS2 assignment");
+  }
+
+  if (/\b(passing|collisions?|track boundaries?|penalties)\b/i.test(lastUser)) {
+    expanded.push("ICRA 2026 RoboRacer rules passing collisions track boundaries penalties warnings");
+  }
+
+  if (/\b(housing|hotel|accommodation|scam|booking)\b/i.test(lastUser)) {
+    expanded.push("ICRA 2026 housing information AIM Austria official booking hotel warning scam");
+  }
+
   const seen = new Set<string>();
   const unique: string[] = [];
   for (const query of expanded) {
@@ -322,6 +343,11 @@ function highStakesGuardResponse(messages: ChatMessage[], chunks: RetrievedChunk
   }
 
   if (/\b(book|reserve|buy|purchase)\b/.test(questionLower) && /\b(flights?|hotels?|restaurants?|tickets?)\b/.test(questionLower)) {
+    const asksForTransaction =
+      /\b(can|could|will|would|please)\s+you\s+(?:help\s+me\s+)?(?:book|reserve|buy|purchase|arrange)\b/.test(
+        questionLower,
+      ) || /\b(?:book|reserve|buy|purchase|arrange)\s+(?:me|us)\b/.test(questionLower);
+    if (!asksForTransaction) return null;
     return "I cannot book or purchase travel, lodging, restaurants, or tickets. The knowledge base does not contain enough information to handle that request, but I can help with the website pages, registration details, documentation, and learning materials it includes.";
   }
 
@@ -363,7 +389,7 @@ function buildSystemPrompt(
       ? contextChunks
           .map(
             (c, i) =>
-              `[${i + 1}] ${c.title ? `Title: ${stripMarkdown(c.title)}\n` : ""}${c.url ? `URL: ${c.url}\n` : ""}Content: ${stripMarkdown(c.text)}`
+              `[${i + 1}] ${c.title ? `Title: ${stripMarkdown(displayTitle(c))}\n` : ""}${c.url ? `URL: ${c.url}\n` : ""}Content: ${stripMarkdown(c.text)}`
           )
           .join("\n\n")
       : "No relevant context found.";
@@ -386,6 +412,7 @@ RULES:
 - For urgent hardware safety questions involving smoke, fire, burning, sparking, batteries, or motors, do not diagnose the cause. Say the knowledge base is not enough and suggest stopping use and getting qualified help.
 - Do not claim you can book, reserve, purchase, or arrange flights, hotels, restaurants, tickets, visas, letters, or event acceptance. Do not infer travel logistics from adjacent accommodation or registration text.
 - Write in plain conversational text. Do NOT use Markdown (no headings, bullet lists, bold/italic, or code fences).
+- Do not output asterisks, Markdown bullets, Markdown headings, or bold markers. Prefer one compact paragraph, or short plain-text sentences.
 - Do NOT cite sources as numbers like [1] or (1).
 - When you rely on information from a source, mention the page title with its URL naturally in the sentence (e.g. "According to the rules page..."), as shown below.
 - URLs will be rendered as clickable links in the UI. To cite, use this exact format: [[link text|https://example.com/path]]. STRICTLY FOLLOW THIS FORMAT.
@@ -509,7 +536,7 @@ export async function* ragStream(
     ),
   ).slice(0, RERANK_CANDIDATE_LIMIT);
 
-  let chunks = candidates.slice(0, FINAL_CONTEXT_LIMIT);
+  let chunks = prioritizeChunksForQuery(candidates, rerankQuery).slice(0, FINAL_CONTEXT_LIMIT);
   let rerankDebug: Record<string, unknown> = {
     enabled: false,
     reason: candidates.length ? "not_run" : "no_candidates",
@@ -522,7 +549,7 @@ export async function* ragStream(
         chunks: candidates,
         topN: FINAL_CONTEXT_LIMIT,
       });
-      chunks = reranked.chunks;
+      chunks = prioritizeChunksForQuery(reranked.chunks, rerankQuery);
       rerankDebug = {
         enabled: true,
         model: reranked.model,
@@ -588,6 +615,7 @@ export async function* ragStream(
         lexicalRank: c.metadata.lexical_rank ?? null,
         retrievalMethods: c.metadata.retrieval_methods ?? [],
         title: c.title ?? null,
+        displayTitle: displayTitle(c),
         url: c.url ?? null,
         textPreview: c.text.slice(0, 800),
       })),
@@ -642,7 +670,7 @@ export async function* ragStream(
     if (sourceKeys.has(key)) continue;
     sourceKeys.add(key);
     sources.push({
-      title: chunk.title ?? chunk.url ?? "Source",
+      title: displayTitle(chunk),
       url: chunk.url ?? "",
       score: Math.round(chunk.score * 100) / 100,
     });
@@ -656,4 +684,81 @@ export async function* ragStream(
 
 function normalizeSourceKey(value: string) {
   return value.trim().replace(/\/+$/, "").toLowerCase();
+}
+
+function prioritizeChunksForQuery(chunks: RetrievedChunk[], query: string) {
+  return [...chunks].sort((a, b) => {
+    const priorityDelta = chunkPriority(b, query) - chunkPriority(a, query);
+    if (priorityDelta !== 0) return priorityDelta;
+    const bScore = numericScore(b);
+    const aScore = numericScore(a);
+    return bScore - aScore;
+  });
+}
+
+function chunkPriority(chunk: RetrievedChunk, query: string) {
+  const q = query.toLowerCase();
+  const url = (chunk.url ?? "").toLowerCase();
+  const title = (chunk.title ?? "").toLowerCase();
+  const hay = `${url} ${title}`;
+  const mentionsSpecificPastYear = /\b20(?:21|22|23|24|25)\b/.test(q);
+  let score = 0;
+
+  if (/\b(icra\s*2026|latest|current|upcoming|visa|registration|timeline|event day|housing|hotel)\b/.test(q)) {
+    if (url.includes("icra2026-race.roboracer.ai")) score += 45;
+    if (url.includes("2026.ieee-icra.org")) score += 40;
+    if (!mentionsSpecificPastYear && /\b20(?:21|22|23|24|25)\b/.test(hay)) score -= 25;
+  }
+
+  if (/\b(competition rules?|passing|collisions?|track boundaries?|penalties)\b/.test(q)) {
+    if (url.includes("icra2026-race.roboracer.ai/rules")) score += 80;
+    if (url.includes("icra2026-race.roboracer.ai/competition_rules")) score += 65;
+    if (url.includes("roboracer.ai/rules.md")) score += 45;
+    if (!mentionsSpecificPastYear && /(?:race\.f1tenth\.org|f1tenth\.org\/rules)/.test(url)) score -= 25;
+  }
+
+  if (/\b(course\s*kit|first lab|1st lab|lab\s*(?:one|1)|start here|getting started)\b/.test(q)) {
+    if (url.includes("f1tenth-coursekit.readthedocs.io")) score += 35;
+    if (url.includes("/getting_started/index")) score += 85;
+    if (url.includes("/assignments/labs/lab1")) score += 85;
+    if (url.includes("/assignments/labs/index")) score += 65;
+    if (url.includes("/lectures/modulea/")) score += 25;
+    if (url.includes("/introduction/syllabus")) score -= 20;
+  }
+
+  if (/\b(housing|hotel|accommodation|scam|booking)\b/.test(q)) {
+    if (url.includes("2026.ieee-icra.org/attend/housing-information")) score += 90;
+  }
+
+  return score;
+}
+
+function numericScore(chunk: RetrievedChunk) {
+  const rerankScore = chunk.metadata.rerank_score;
+  if (typeof rerankScore === "number" && Number.isFinite(rerankScore)) return rerankScore;
+  const rrfScore = chunk.metadata.rrf_score;
+  if (typeof rrfScore === "number" && Number.isFinite(rrfScore)) return rrfScore;
+  return chunk.score;
+}
+
+function displayTitle(chunk: RetrievedChunk) {
+  return normalizeDisplayTitle(chunk.title ?? chunk.url ?? "Source", chunk.url);
+}
+
+function normalizeDisplayTitle(title: string, url?: string) {
+  let out = title
+    .replace(/&mdash;/g, "-")
+    .replace(/&ndash;|&#8211;/g, "-")
+    .replace(/&para;/g, "")
+    .replace(/&#038;|&amp;/g, "&")
+    .replace(/\s*¶\s*/g, "")
+    .replace(/\s+\(\d+\/\d+\)$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (url?.includes("2026.ieee-icra.org")) {
+    out = out.replace(/\bIEEE ICRA 2025\b/g, "IEEE ICRA 2026");
+  }
+
+  return out.replace(/\bRoboracer\b/g, "RoboRacer");
 }

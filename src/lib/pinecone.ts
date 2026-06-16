@@ -28,6 +28,8 @@ export type RerankResult = {
   usage?: unknown;
 };
 
+let rerankDisabledUntil = 0;
+
 export async function queryPinecone({
   indexName,
   namespace,
@@ -83,6 +85,10 @@ export async function rerankChunks({
     return { chunks: chunks.slice(0, topN), model };
   }
 
+  if (Date.now() < rerankDisabledUntil) {
+    throw new Error("Pinecone rerank temporarily disabled after quota exhaustion");
+  }
+
   const pinecone = getPinecone();
   const documents = chunks.map((chunk) => ({
     title: chunk.title ?? "",
@@ -90,12 +96,20 @@ export async function rerankChunks({
     text: chunk.text.slice(0, 6_000),
   }));
 
-  const result = await pinecone.inference.rerank(model, query, documents, {
-    topN,
-    returnDocuments: false,
-    rankFields: ["text"],
-    parameters: { truncate: "END" },
-  });
+  let result: Awaited<ReturnType<typeof pinecone.inference.rerank>>;
+  try {
+    result = await pinecone.inference.rerank(model, query, documents, {
+      topN,
+      returnDocuments: false,
+      rankFields: ["text"],
+      parameters: { truncate: "END" },
+    });
+  } catch (error) {
+    if (isRerankQuotaError(error)) {
+      rerankDisabledUntil = Date.now() + 6 * 60 * 60 * 1000;
+    }
+    throw error;
+  }
 
   const rankedChunks: RetrievedChunk[] = [];
   for (const ranked of result.data) {
@@ -117,6 +131,11 @@ export async function rerankChunks({
     model: result.model,
     usage: result.usage,
   };
+}
+
+function isRerankQuotaError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /RESOURCE_EXHAUSTED|rerank request limit|status:?\s*429/i.test(message);
 }
 
 export async function upsertChunks(
