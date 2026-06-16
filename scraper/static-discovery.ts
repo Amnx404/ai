@@ -14,6 +14,7 @@ export type StaticDiscoveryPage = {
   statusCode: number | null;
   contentType: string | null;
   links: string[];
+  markdownSource?: "html" | "url";
   error?: string;
 };
 
@@ -95,16 +96,16 @@ export async function discoverStaticPages(opts: {
         visited.add(pageUrl);
       }
 
-      const rawLinks = extractDocumentLinks(fetched.html, pageUrl);
-      if (rawLinks.length <= 5) {
-        rawLinks.push(
-          ...(await extractSparsePageAssetLinks(fetched.html, pageUrl, {
-            timeoutMs,
-            userAgent: opts.userAgent,
-            cache: assetTextCache,
-          })),
-        );
-      }
+      const documentLinks = extractDocumentLinks(fetched.html, pageUrl);
+      const assetLinks =
+        documentLinks.length <= 5
+          ? await extractSparsePageAssetLinks(fetched.html, pageUrl, {
+              timeoutMs,
+              userAgent: opts.userAgent,
+              cache: assetTextCache,
+            })
+          : [];
+      const rawLinks = [...documentLinks, ...assetLinks];
       const links = filterLinks(rawLinks, opts);
 
       pages.push({
@@ -115,6 +116,7 @@ export async function discoverStaticPages(opts: {
         statusCode: fetched.statusCode,
         contentType: fetched.contentType,
         links,
+        markdownSource: assetLinks.length > 0 ? "url" : "html",
       });
 
       if (item.depth < opts.maxDepth) {
@@ -415,6 +417,7 @@ function isTextLikeContentType(contentType: string) {
   return (
     normalized.includes("text/html") ||
     normalized.includes("application/xhtml+xml") ||
+    normalized.includes("text/markdown") ||
     normalized.includes("text/plain") ||
     normalized.includes("application/xml")
   );
