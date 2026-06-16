@@ -124,7 +124,17 @@ function lastUserContent(messages: ChatMessage[]) {
 
 function expandSearchQueries(messages: ChatMessage[], plannedQueries: string[]) {
   const lastUser = lastUserContent(messages);
-  const expanded = [lastUser, ...plannedQueries].filter(Boolean);
+  const priorityQueries: string[] = [];
+
+  if (
+    /\b(attend|participat(?:e|ing|ion)?|join|compete|competition|race)\b/i.test(lastUser) &&
+    /\b(document(?:s|ation)?|requirements?|step\s*by\s*step|process|apply|application|latest)\b/i.test(lastUser)
+  ) {
+    priorityQueries.push("ICRA 2026 RoboRacer registration requirements FAQ timeline visa information participation steps");
+    priorityQueries.push("ICRA 2026 RoboRacer registration form video demonstration hardware list ICRA registration visa letters");
+  }
+
+  const expanded = [lastUser, ...priorityQueries, ...plannedQueries].filter(Boolean);
   const lab = lastUser.match(/\blab\s*(\d+)\b/i);
   if (lab?.[1]) {
     expanded.push(`lab ${lab[1]} lab${lab[1]} assignment exercise instructions`);
@@ -328,7 +338,8 @@ function highStakesGuardResponse(messages: ChatMessage[], chunks: RetrievedChunk
 
   if (
     /\b(travel(?:ing|ling)?|international|from india|from albania|from kosovo|from nigeria)\b/.test(questionLower) &&
-    /\b(register|registration|slack|email|organizers?)\b/.test(questionLower)
+    /\b(register|registration|slack|email|organizers?)\b/.test(questionLower) &&
+    chunks.length === 0
   ) {
     return "The knowledge base does not include country-specific travel or visa requirements. Start with the official registration or event page, use the listed community/support channels for updates, and contact the organizers for event-specific travel, visa, or participation questions.";
   }
@@ -412,12 +423,15 @@ RULES:
 - Base your answers ONLY on the context provided below.
 - If the context does not contain enough information, say so honestly.
 - Do not fabricate facts, links, or information.
-- For legal, immigration, visa, travel, safety, payment, eligibility, or deadline questions: only answer exact facts present in the context. If the context does not contain the exact requirement, say the knowledge base does not include it and suggest checking the official event/conference page or contacting organizers. Do not infer visa requirements from nationality or location.
+- For legal, immigration, visa, travel, safety, payment, eligibility, or deadline questions: only answer exact facts present in the context. Do not infer visa requirements from nationality or location.
+- If a user asks from a specific country or location, separate the answer into two ideas: first, say whether the context has country-specific requirements for that location; second, still provide the general documented competition, registration, attendance, timeline, and visa-support process from the context when those facts are available. Do not say the process is the same for all international participants unless the context explicitly states that.
+- For participation or attendance process questions, synthesize a practical step-by-step from the context. Include documented items such as the official registration form, video demonstration, hardware list, ICRA/on-site registration notes, deadlines, visa-information page, invitation-letter/payment notes, Slack/email organizer channels, and race-day timeline when present.
+- For overall "documentation requirements" or "step-by-step process" questions, lead with competition participation and registration materials first. Put visa/travel support after the competition registration steps unless the user asks mainly about visas.
 - For legal permission questions such as public-road use, do not answer yes/no unless the context explicitly states that exact permission or prohibition. Do not infer legality from race rules, build docs, or the absence of a public-road page.
 - For urgent hardware safety questions involving smoke, fire, burning, sparking, batteries, or motors, do not diagnose the cause. Say the knowledge base is not enough and suggest stopping use and getting qualified help.
 - Do not claim you can book, reserve, purchase, or arrange flights, hotels, restaurants, tickets, visas, letters, or event acceptance. Do not infer travel logistics from adjacent accommodation or registration text.
 - Write in plain conversational text. Do NOT use Markdown (no headings, bullet lists, bold/italic, or code fences).
-- Do not output asterisks, Markdown bullets, Markdown headings, or bold markers. Prefer one compact paragraph, or short plain-text sentences.
+- Do not output asterisks, Markdown bullets, Markdown headings, or bold markers. Prefer one compact paragraph, short plain-text sentences, or "Step 1:", "Step 2:" style sentences when the user explicitly asks for a step-by-step process.
 - Do NOT cite sources as numbers like [1] or (1).
 - When you rely on information from a source, mention the page title with its URL naturally in the sentence (e.g. "According to the rules page..."), as shown below.
 - URLs will be rendered as clickable links in the UI. To cite, use this exact format: [[link text|https://example.com/path]]. STRICTLY FOLLOW THIS FORMAT.
