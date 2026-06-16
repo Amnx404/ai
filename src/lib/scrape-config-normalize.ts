@@ -104,6 +104,15 @@ export function normalizeScrapeConfigObject(input: unknown): Record<string, unkn
     else delete out.cloudflare_discovery_mode;
   }
 
+  if ("cloudflare_static_discovery_scope" in out) {
+    const value =
+      typeof out.cloudflare_static_discovery_scope === "string"
+        ? out.cloudflare_static_discovery_scope.trim().toLowerCase()
+        : "";
+    if (value === "seed" || value === "allowed_prefixes") out.cloudflare_static_discovery_scope = value;
+    else delete out.cloudflare_static_discovery_scope;
+  }
+
   if ("source_groups" in out) {
     const groups = normalizeSourceGroups(out.source_groups);
     if (groups.length > 0) out.source_groups = groups;

@@ -39,6 +39,7 @@ export type StaticDiscoveryProgress =
 
 export async function discoverStaticPages(opts: {
   seedUrls: string[];
+  scopeUrls?: string[];
   allowedPrefixes: string[];
   respectAllowedPrefixes: boolean;
   maxPages: number;
@@ -58,23 +59,35 @@ export async function discoverStaticPages(opts: {
   const known = new Map<string, number>();
   const visited = new Set<string>();
   const pages: StaticDiscoveryPage[] = [];
-  const maxKnownUrls = Math.max(opts.maxPages * 4, opts.maxPages + opts.seedUrls.length);
+  const maxKnownUrls = Math.max(opts.maxPages * 4, opts.maxPages + opts.seedUrls.length + (opts.scopeUrls?.length ?? 0));
   const assetTextCache = new Map<string, Promise<string | null>>();
   const sourceFallbackCache = new Map<string, Promise<string[]>>();
 
+  const enqueueStartUrl = (rawUrl: string, depth: number) => {
+    const url = canonicalizeUrl(rawUrl);
+    if (!url || known.has(url)) return false;
+    if (!urlAllowed(url, opts)) return false;
+    known.set(url, depth);
+    queue.push({ url, depth });
+    return true;
+  };
+
+  let acceptedSeedCount = 0;
+  let acceptedScopeRootCount = 0;
   for (const seedUrl of opts.seedUrls) {
-    const url = canonicalizeUrl(seedUrl);
-    if (!url || known.has(url)) continue;
-    if (!urlAllowed(url, opts)) continue;
-    known.set(url, 0);
-    queue.push({ url, depth: 0 });
+    if (enqueueStartUrl(seedUrl, 0)) acceptedSeedCount += 1;
+  }
+  for (const scopeUrl of opts.scopeUrls ?? []) {
+    if (enqueueStartUrl(scopeUrl, 0)) acceptedScopeRootCount += 1;
   }
 
   await opts.onProgress?.({
     event: "discover_start",
-    message: `Discovering static links from ${queue.length} seed URLs`,
+    message: `Discovering static links from ${queue.length} start URLs`,
     data: {
-      seed_count: queue.length,
+      seed_count: acceptedSeedCount,
+      scope_root_count: acceptedScopeRootCount,
+      start_url_count: queue.length,
       max_pages: opts.maxPages,
       max_depth: opts.maxDepth,
       parallel_workers: parallelWorkers,
@@ -621,7 +634,7 @@ async function fetchHtml(url: string, opts: { timeoutMs: number; userAgent?: str
     });
     const contentType = res.headers.get("content-type");
     const html = await res.text();
-    if (!res.ok) {
+    if (!res.ok && !isUsableSpaFallbackResponse(url, res.status, contentType, html)) {
       throw new Error(`HTTP ${res.status} ${res.statusText}`);
     }
     if (contentType && !isTextLikeContentType(contentType)) {
@@ -636,6 +649,32 @@ async function fetchHtml(url: string, opts: { timeoutMs: number; userAgent?: str
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function isUsableSpaFallbackResponse(url: string, status: number, contentType: string | null, html: string) {
+  if (status !== 404) return false;
+  if (contentType && !contentType.toLowerCase().includes("text/html")) return false;
+  if (!isSafeSpaRouteFallbackUrl(url)) return false;
+  return looksLikeSpaAppShell(html);
+}
+
+function isSafeSpaRouteFallbackUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.search) return false;
+    const pathname = decodeURIComponent(parsed.pathname);
+    if (pathname === "/" || pathname.includes("%")) return false;
+    if (/[${}[\]()^*\\]/.test(pathname)) return false;
+    if (/\.[a-z0-9]{1,8}$/i.test(pathname)) return false;
+    return /^\/[a-z0-9][a-z0-9/_-]*$/i.test(pathname);
+  } catch {
+    return false;
+  }
+}
+
+function looksLikeSpaAppShell(html: string) {
+  if (!/<(?:div|main)\b[^>]*(?:id|class)\s*=\s*["'](?:root|app|__next)["']/i.test(html)) return false;
+  return /<script\b[^>]*\bsrc\s*=/i.test(html);
 }
 
 function isTextLikeContentType(contentType: string) {

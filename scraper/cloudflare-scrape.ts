@@ -408,6 +408,7 @@ async function runStaticDiscoveryMarkdownScrape(opts: {
 
   const discovery = await discoverStaticPages({
     seedUrls: opts.seedUrls,
+    scopeUrls: cloudflareStaticDiscoveryScope(opts.request) === "allowed_prefixes" ? opts.allowedPrefixes : [],
     allowedPrefixes: opts.allowedPrefixes,
     respectAllowedPrefixes: opts.respectAllowedPrefixes,
     maxPages: opts.maxPages,
@@ -562,6 +563,7 @@ async function runStaticDiscoveryMarkdownScrape(opts: {
     allowed_prefixes: opts.allowedPrefixes,
     requested_max_pages: opts.maxPages,
     requested_depth: opts.maxDepth,
+    static_discovery_scope: cloudflareStaticDiscoveryScope(opts.request),
     discovered_url_count: discovery.discoveredUrlCount,
     fetched_page_count: discovery.pages.length,
     failed_discovery_url_count: discovery.failedUrlCount,
@@ -601,6 +603,7 @@ async function runStaticDiscoveryMarkdownScrape(opts: {
       urls: savedPages.map((page) => page.url),
       provider: "cloudflare",
       cloudflare_discovery_mode: "static",
+      cloudflare_static_discovery_scope: cloudflareStaticDiscoveryScope(opts.request),
       cloudflare_markdown_requests: records.length + markdownFailures.length,
       cloudflare_markdown_failure_count: markdownFailures.length,
     },
@@ -1191,6 +1194,28 @@ function cloudflareDiscoveryMode(request: ScrapeRequest): CloudflareDiscoveryMod
   if (envMode) return envMode;
 
   return "crawl";
+}
+
+function cloudflareStaticDiscoveryScope(request: ScrapeRequest): "seed" | "allowed_prefixes" {
+  const explicit = normalizeCloudflareStaticDiscoveryScope(request.cloudflare_static_discovery_scope);
+  if (explicit) return explicit;
+
+  const envMode = normalizeCloudflareStaticDiscoveryScope(process.env.CLOUDFLARE_STATIC_DISCOVERY_SCOPE);
+  return envMode ?? "seed";
+}
+
+function normalizeCloudflareStaticDiscoveryScope(value: unknown): "seed" | "allowed_prefixes" | null {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (normalized === "seed" || normalized === "seeds") return "seed";
+  if (
+    normalized === "allowed_prefixes" ||
+    normalized === "allowed-prefixes" ||
+    normalized === "allowed-prefix-roots" ||
+    normalized === "allowed_prefix_roots"
+  ) {
+    return "allowed_prefixes";
+  }
+  return null;
 }
 
 function normalizeCloudflareDiscoveryMode(value: unknown): CloudflareDiscoveryMode | null {

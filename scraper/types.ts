@@ -26,6 +26,7 @@ export type ScrapeRequest = {
   cloudflare_render?: boolean;
   cloudflare_render_mode?: "auto" | "static" | "browser";
   cloudflare_discovery_mode?: "crawl" | "static";
+  cloudflare_static_discovery_scope?: "seed" | "allowed_prefixes";
   cloudflare_job_retries?: number;
   cloudflare_per_seed_limit?: number | null;
   cloudflare_stall_timeout_ms?: number | null;

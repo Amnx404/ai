@@ -124,6 +124,11 @@ export async function POST(req: NextRequest) {
     scrapeConfig.cloudflare_discovery_mode === "crawl" || scrapeConfig.cloudflare_discovery_mode === "static"
       ? scrapeConfig.cloudflare_discovery_mode
       : undefined;
+  const cloudflareStaticDiscoveryScope: "seed" | "allowed_prefixes" | undefined =
+    scrapeConfig.cloudflare_static_discovery_scope === "seed" ||
+    scrapeConfig.cloudflare_static_discovery_scope === "allowed_prefixes"
+      ? scrapeConfig.cloudflare_static_discovery_scope
+      : undefined;
   const scrape = {
     scrape_provider:
       scrapeConfig.scrape_provider === "cloudflare" || scrapeConfig.scrape_provider === "firecrawl"
@@ -153,6 +158,7 @@ export async function POST(req: NextRequest) {
         : undefined,
     cloudflare_render_mode: cloudflareRenderMode,
     cloudflare_discovery_mode: cloudflareDiscoveryMode,
+    cloudflare_static_discovery_scope: cloudflareStaticDiscoveryScope,
     cloudflare_job_retries:
       typeof scrapeConfig.cloudflare_job_retries === "number"
         ? scrapeConfig.cloudflare_job_retries
