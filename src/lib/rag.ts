@@ -318,6 +318,37 @@ function shouldKeepChunkForQuery(chunk: RetrievedChunk, query: string) {
   return userExplicitlyAskedForRepoFile;
 }
 
+function shouldKeepEventChunkForQuery(chunk: RetrievedChunk, query: string) {
+  const q = query.toLowerCase();
+  if (!/\bicra\s*2026\b/.test(q)) return true;
+
+  const url = (chunk.url ?? "").toLowerCase();
+  const nonIcra2026EventSignals = [
+    "iv2026-race.roboracer.ai",
+    "2026ifac-roboracer.com",
+    "cdc2025-race.roboracer.ai",
+    "techfest.org/competitions/roboracer",
+    "cdc2024-race.f1tenth.org",
+    "bu2024-race.f1tenth.org",
+    "korea-race24f1tenth.org",
+    "iros2024-race.f1tenth.org",
+    "itsc2024-race.f1tenth.org",
+    "sm2024-race.f1tenth.org",
+    "iv2024-race.f1tenth.org",
+    "cpsweek2024-race.f1tenth.org",
+    "icra2024-race.f1tenth.org",
+    "icra2024-madgames.f1tenth.org",
+    "iros2023-race.f1tenth.org",
+    "iros2023-madgames.f1tenth.org",
+    "korea-race23.f1tenth.org",
+    "icra2023-race.f1tenth.org",
+    "cps2023-race.f1tenth.org",
+    "iv2023-race.f1tenth.org",
+  ];
+
+  return !nonIcra2026EventSignals.some((signal) => url.includes(signal));
+}
+
 function buildRerankQuery(messages: ChatMessage[], queries: string[]) {
   const lastUser = lastUserContent(messages);
   const parts = [lastUser, ...queries].filter((value): value is string => Boolean(value));
@@ -551,7 +582,8 @@ export async function* ragStream(
   // model actually receives, so it must be good on its own.
   const candidates = fuseByRRF(
     dedupeChunks(allChunks).filter((chunk) =>
-      shouldKeepChunkForQuery(chunk, rerankQuery),
+      shouldKeepChunkForQuery(chunk, rerankQuery) &&
+      shouldKeepEventChunkForQuery(chunk, rerankQuery),
     ),
   ).slice(0, RERANK_CANDIDATE_LIMIT);
 
