@@ -40,30 +40,33 @@ export async function storeKnowledgeChunks({
       });
 
       let count = 0;
-      const batchSize = 500;
+      const batchSize = 100;
       for (let i = 0; i < chunks.length; i += batchSize) {
         const batch = chunks.slice(i, i + batchSize);
         await tx.knowledgeChunk.createMany({
-          data: batch.map((chunk) => ({
-            siteId: normalizedSiteId,
-            namespace,
-            vectorId: chunk.id,
-            runId,
-            url: chunk.url ?? "",
-            title: chunk.title ?? null,
-            description: chunk.description ?? null,
-            text: chunk.text,
-            source: "scraper",
-            pageIndex: chunk.page_index ?? null,
-            chunkIndex: chunk.chunk_index ?? null,
-            chars: chunk.chars ?? chunk.text.length,
-            metadata: {
-              run_id: runId,
+          data: batch.map((chunk) => {
+            const text = sanitizeDbText(chunk.text);
+            return {
+              siteId: normalizedSiteId,
+              namespace,
+              vectorId: sanitizeDbText(chunk.id),
+              runId: sanitizeDbText(runId),
+              url: sanitizeDbText(chunk.url ?? ""),
+              title: chunk.title == null ? null : sanitizeDbText(chunk.title),
+              description: chunk.description == null ? null : sanitizeDbText(chunk.description),
+              text,
               source: "scraper",
-              page_index: chunk.page_index ?? null,
-              chunk_index: chunk.chunk_index ?? null,
-            } satisfies Prisma.InputJsonObject,
-          })),
+              pageIndex: chunk.page_index ?? null,
+              chunkIndex: chunk.chunk_index ?? null,
+              chars: chunk.chars ?? text.length,
+              metadata: {
+                run_id: runId,
+                source: "scraper",
+                page_index: chunk.page_index ?? null,
+                chunk_index: chunk.chunk_index ?? null,
+              } satisfies Prisma.InputJsonObject,
+            };
+          }),
           skipDuplicates: true,
         });
 
@@ -94,4 +97,10 @@ export async function storeKnowledgeChunks({
   } finally {
     await db.$disconnect().catch(() => {});
   }
+}
+
+function sanitizeDbText(value: string) {
+  return value
+    .replace(/\u0000/g, "")
+    .replace(/\\x/gi, "/x");
 }
