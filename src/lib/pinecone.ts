@@ -29,6 +29,8 @@ export type RerankResult = {
 };
 
 let rerankDisabledUntil = 0;
+const OPENROUTER_RERANK_URL = "https://openrouter.ai/api/v1/rerank";
+const DEFAULT_RERANK_MODEL = "cohere/rerank-4-pro";
 
 export async function queryPinecone({
   indexName,
@@ -74,7 +76,7 @@ export async function rerankChunks({
   query,
   chunks,
   topN,
-  model = env.PINECONE_RERANK_MODEL ?? "bge-reranker-v2-m3",
+  model = env.OPENROUTER_RERANK_MODEL ?? DEFAULT_RERANK_MODEL,
 }: {
   query: string;
   chunks: RetrievedChunk[];
@@ -86,56 +88,117 @@ export async function rerankChunks({
   }
 
   if (Date.now() < rerankDisabledUntil) {
-    throw new Error("Pinecone rerank temporarily disabled after quota exhaustion");
+    throw new Error("OpenRouter rerank temporarily disabled after rate limiting");
   }
 
-  const pinecone = getPinecone();
-  const documents = chunks.map((chunk) => ({
-    title: chunk.title ?? "",
-    url: chunk.url ?? "",
-    text: chunk.text.slice(0, 6_000),
-  }));
+  const documents = chunks.map((chunk) =>
+    [
+      chunk.title ? `Title: ${chunk.title}` : "",
+      chunk.url ? `URL: ${chunk.url}` : "",
+      chunk.text,
+    ]
+      .filter(Boolean)
+      .join("\n")
+      .slice(0, 6_000),
+  );
 
-  let result: Awaited<ReturnType<typeof pinecone.inference.rerank>>;
+  let result: OpenRouterRerankResponse;
   try {
-    result = await pinecone.inference.rerank(model, query, documents, {
-      topN,
-      returnDocuments: false,
-      rankFields: ["text"],
-      parameters: { truncate: "END" },
-    });
+    result = await openRouterRerank({ model, query, documents, topN });
   } catch (error) {
-    if (isRerankQuotaError(error)) {
-      rerankDisabledUntil = Date.now() + 6 * 60 * 60 * 1000;
+    if (isRerankRateLimitError(error)) {
+      rerankDisabledUntil = Date.now() + 5 * 60 * 1000;
     }
     throw error;
   }
 
   const rankedChunks: RetrievedChunk[] = [];
-  for (const ranked of result.data) {
+  for (const ranked of result.results ?? []) {
     const original = chunks[ranked.index];
+    const score = typeof ranked.relevance_score === "number" ? ranked.relevance_score : ranked.score;
     if (!original) continue;
+    if (typeof score !== "number" || !Number.isFinite(score)) continue;
     rankedChunks.push({
       ...original,
-      score: ranked.score,
+      score,
       metadata: {
         ...original.metadata,
-        rerank_score: ranked.score,
+        rerank_score: score,
         rerank_model: result.model,
+        rerank_provider: result.provider ?? "openrouter",
       },
     });
   }
 
   return {
     chunks: rankedChunks,
-    model: result.model,
-    usage: result.usage,
+    model: result.model ?? model,
+    usage: {
+      ...(isRecord(result.usage) ? result.usage : { usage: result.usage }),
+      id: result.id,
+      provider: result.provider,
+    },
   };
 }
 
-function isRerankQuotaError(error: unknown) {
+type OpenRouterRerankResponse = {
+  id?: string;
+  model?: string;
+  provider?: string;
+  results?: Array<{
+    index: number;
+    relevance_score?: number;
+    score?: number;
+  }>;
+  usage?: unknown;
+};
+
+async function openRouterRerank({
+  model,
+  query,
+  documents,
+  topN,
+}: {
+  model: string;
+  query: string;
+  documents: string[];
+  topN: number;
+}): Promise<OpenRouterRerankResponse> {
+  const response = await fetch(OPENROUTER_RERANK_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": env.NEXTAUTH_URL,
+      "X-Title": "ALT EGO",
+    },
+    body: JSON.stringify({
+      model,
+      query,
+      documents,
+      top_n: topN,
+    }),
+  });
+
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`OpenRouter rerank failed (${response.status}): ${text.slice(0, 500)}`);
+  }
+
+  try {
+    return JSON.parse(text) as OpenRouterRerankResponse;
+  } catch {
+    throw new Error(`OpenRouter rerank returned invalid JSON: ${text.slice(0, 500)}`);
+  }
+}
+
+function isRerankRateLimitError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
-  return /RESOURCE_EXHAUSTED|rerank request limit|status:?\s*429/i.test(message);
+  return /RESOURCE_EXHAUSTED|rerank request limit|status:?\s*429|\(429\)/i.test(message);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export async function upsertChunks(
