@@ -169,12 +169,12 @@ export async function POST(req: NextRequest) {
             .trim();
         return candidates.filter((s) => {
           const title = s.title ?? "";
-          const main = title.split("|")[0]?.trim() || title.trim();
-          const needle = norm(main);
           const url = s.url?.toLowerCase() ?? "";
           if (url && hay.includes(url)) return true;
-          if (!needle) return false;
-          return norm(hay).includes(needle);
+
+          const normalizedHay = norm(hay);
+          const titleNeedles = titleNeedleCandidates(title).map(norm).filter((needle) => needle.length >= 8);
+          return titleNeedles.some((needle) => normalizedHay.includes(needle));
         });
       };
 
@@ -407,4 +407,19 @@ function sseError(message: string, status: number, req: NextRequest) {
 
 function sanitizeAssistantToken(content: string) {
   return content.replace(/[*`]/g, "");
+}
+
+function titleNeedleCandidates(title: string) {
+  const trimmed = title.trim();
+  if (!trimmed) return [];
+
+  const parts = trimmed
+    .split("|")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length <= 1) return [trimmed];
+
+  const suffixes = parts.slice(1);
+  return [trimmed, ...suffixes];
 }
