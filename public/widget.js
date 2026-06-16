@@ -1,8 +1,8 @@
-"use strict";(()=>{var D=Object.defineProperty;var W=Object.getOwnPropertySymbols;var Y=Object.prototype.hasOwnProperty,q=Object.prototype.propertyIsEnumerable;var O=(i,e,t)=>e in i?D(i,e,{enumerable:!0,configurable:!0,writable:!0,value:t}):i[e]=t,U=(i,e)=>{for(var t in e||(e={}))Y.call(e,t)&&O(i,t,e[t]);if(W)for(var t of W(e))q.call(e,t)&&O(i,t,e[t]);return i};var f=(i,e,t)=>O(i,typeof e!="symbol"?e+"":e,t);function j(i){return`
+"use strict";(()=>{var K=Object.defineProperty;var W=Object.getOwnPropertySymbols;var D=Object.prototype.hasOwnProperty,q=Object.prototype.propertyIsEnumerable;var A=(o,e,t)=>e in o?K(o,e,{enumerable:!0,configurable:!0,writable:!0,value:t}):o[e]=t,U=(o,e)=>{for(var t in e||(e={}))D.call(e,t)&&A(o,t,e[t]);if(W)for(var t of W(e))q.call(e,t)&&A(o,t,e[t]);return o};var m=(o,e,t)=>A(o,typeof e!="symbol"?e+"":e,t);function _(o){return`
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :host {
-      --primary: ${i};
+      --primary: ${o};
       --bg: #ffffff;
       --bg-secondary: #f9fafb;
       --text: #111827;
@@ -74,97 +74,158 @@
       right: 24px;
       bottom: 24px;
       z-index: 999998;
-      display: inline-flex;
-      height: 52px;
-      max-width: min(240px, calc(100vw - 32px));
+      display: flex;
+      width: 64px;
+      height: 64px;
       align-items: center;
       justify-content: center;
-      gap: 9px;
-      border: 1px solid color-mix(in srgb, var(--primary) 76%, #000);
-      border-radius: 14px;
-      background: var(--primary);
-      color: #ffffff;
-      box-shadow: 0 12px 28px color-mix(in srgb, var(--primary) 30%, transparent);
+      border: none;
+      border-radius: 50%;
+      background: transparent;
       cursor: pointer;
       outline: none;
-      padding: 0 15px 0 12px;
-      transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+      animation: float-orb 4s ease-in-out infinite;
+      transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
       -webkit-tap-highlight-color: transparent;
     }
 
-    #launcher:hover {
-      box-shadow: 0 16px 34px color-mix(in srgb, var(--primary) 36%, transparent);
-      transform: translateY(-1px);
+    @keyframes float-orb {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-4px); }
     }
 
-    #launcher:active { transform: translateY(0); }
+    #launcher::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      z-index: -2;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--primary), color-mix(in srgb, var(--primary) 70%, #fff), color-mix(in srgb, var(--primary) 60%, #000), var(--primary));
+      background-size: 300% 300%;
+      box-shadow: 0 8px 32px color-mix(in srgb, var(--primary) 50%, transparent);
+      animation: gradient-spin 6s ease infinite, morph-blob 8s ease-in-out infinite alternate;
+      transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    #launcher::after {
+      content: '';
+      position: absolute;
+      inset: 2px;
+      z-index: -1;
+      border-radius: 50%;
+      background: linear-gradient(to bottom right, rgba(255,255,255,0.4), rgba(255,255,255,0.05));
+      box-shadow: inset 0 2px 4px rgba(255,255,255,0.7), inset 0 -4px 10px rgba(0,0,0,0.15);
+      animation: morph-blob 8s ease-in-out infinite alternate;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    @keyframes gradient-spin {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+
+    @keyframes morph-blob {
+      0% { border-radius: 50% 50% 50% 50% / 50% 50% 50% 50%; }
+      33% { border-radius: 55% 45% 55% 45% / 45% 55% 45% 55%; }
+      66% { border-radius: 45% 55% 45% 55% / 55% 45% 55% 45%; }
+      100% { border-radius: 50% 50% 50% 50% / 50% 50% 50% 50%; }
+    }
+
+    #launcher:hover {
+      animation-play-state: paused;
+      transform: scale(1.1) !important;
+    }
+
+    #launcher:hover::before,
+    #launcher:hover::after {
+      border-radius: 20px !important;
+      animation-play-state: paused;
+    }
+
+    #launcher:hover::before {
+      box-shadow: 0 12px 40px color-mix(in srgb, var(--primary) 70%, transparent);
+    }
+
+    #launcher:active { transform: scale(0.96) translateY(0) !important; }
 
     #launcher:focus-visible {
-      box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 18%, transparent), 0 12px 28px color-mix(in srgb, var(--primary) 30%, transparent);
-    }
-
-    .launcher-face {
-      display: flex;
-      width: 28px;
-      height: 28px;
-      flex: 0 0 auto;
-      align-items: center;
-      justify-content: center;
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 18%, transparent);
     }
 
     #launcher svg {
-      width: 22px;
-      height: 22px;
-      fill: none;
-      stroke: currentColor;
-      stroke-width: 2;
-      stroke-linecap: round;
-      stroke-linejoin: round;
+      width: 28px;
+      height: 28px;
+      z-index: 10;
+      fill: #ffffff;
+      filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));
+      transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease;
+    }
+
+    #launcher .icon-chat {
+      animation: sparkle-pulse 3s ease-in-out infinite alternate;
+    }
+
+    @keyframes sparkle-pulse {
+      0% { transform: scale(0.95); filter: drop-shadow(0 0 4px rgba(255,255,255,0.4)); }
+      100% { transform: scale(1.05); filter: drop-shadow(0 0 12px rgba(255,255,255,0.9)); }
     }
 
     #launcher .launcher-logo {
-      width: 28px;
-      height: 28px;
-      border: 1px solid rgba(255,255,255,0.55);
-      border-radius: 8px;
-      background: #ffffff;
+      position: absolute;
+      z-index: 10;
+      width: 36px;
+      height: 36px;
+      border: 1px solid rgba(255,255,255,0.6);
+      border-radius: 50%;
+      background: rgba(255,255,255,0.95);
       object-fit: cover;
-    }
-
-    .launcher-text {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-size: 14px;
-      font-weight: 750;
-      letter-spacing: 0;
+      box-shadow: 0 6px 14px rgba(0,0,0,0.18);
+      opacity: 1;
+      transition: opacity 0.2s ease;
     }
 
     #launcher .icon-close {
-      display: none;
-      width: 20px;
-      height: 20px;
-      fill: currentColor;
-      stroke: none;
+      position: absolute;
+      opacity: 0;
+      transform: rotate(-90deg) scale(0.5);
+    }
+
+    #launcher.open .launcher-logo,
+    #launcher.open .icon-chat {
+      opacity: 0;
+    }
+
+    #launcher.open .icon-chat {
+      animation: none;
+      transform: rotate(90deg) scale(0.5);
     }
 
     #launcher.open {
-      width: 52px;
-      padding: 0;
-      border-color: var(--border);
-      background: #ffffff;
-      color: var(--text);
-      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+      animation: none !important;
+      transform: scale(0.9) !important;
     }
 
-    #launcher.open .launcher-face,
-    #launcher.open .launcher-text {
-      display: none;
+    #launcher.open::before,
+    #launcher.open::after {
+      border-radius: 50% !important;
+      background: var(--bg);
+      box-shadow: var(--shadow) !important;
+      animation: none !important;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+
+    #launcher.open svg {
+      fill: var(--text);
+      filter: none;
     }
 
     #launcher.open .icon-close {
-      display: block;
+      opacity: 1;
+      transform: rotate(0deg) scale(1);
     }
 
     #panel {
@@ -190,6 +251,44 @@
       transform: translateY(12px);
       transform-origin: bottom right;
       transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+
+    #resize-grip {
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 10;
+      width: 36px;
+      height: 36px;
+      border: none;
+      border-top-left-radius: 16px;
+      background: transparent;
+      cursor: nwse-resize;
+      opacity: 0.55;
+      transition: background 0.2s ease, opacity 0.2s ease;
+    }
+
+    #resize-grip:hover {
+      background: radial-gradient(circle at top left, rgba(17,24,39,0.08) 40%, transparent 70%);
+      opacity: 1;
+    }
+
+    #resize-grip::before {
+      content: "";
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      width: 8px;
+      height: 8px;
+      border-top: 2px solid rgba(17,24,39,0.42);
+      border-left: 2px solid rgba(17,24,39,0.42);
+      border-top-left-radius: 2px;
+      transition: border-color 0.2s ease, transform 0.2s ease;
+    }
+
+    #resize-grip:hover::before {
+      border-color: rgba(17,24,39,0.72);
+      transform: translate(-1.5px, -1.5px);
     }
 
     #panel.open {
@@ -657,50 +756,53 @@
       #launcher {
         right: 16px;
         bottom: 16px;
-        max-width: calc(100vw - 32px);
+      }
+
+      #resize-grip {
+        display: none;
       }
 
       .message {
         max-width: 92%;
       }
     }
-  `}var M="rr_chat_session",C="rr_chat_messages";function G(i){var t,s;let e=document.querySelectorAll("script[src*='widget.js']");for(let r of e)try{return new URL(r.src).origin}catch(n){}return(s=(t=window.ChatWidget)==null?void 0:t.apiBase)!=null?s:""}function H(i){return new Date(i).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}function d(i){return i.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}function K(i){var r;let e=i.trim().replace(/\s+/g," "),s=((r=e.split("|").map(n=>n.trim()).filter(Boolean)[0])!=null?r:e)||"Source";return s.length>32?`${s.slice(0,29)}\u2026`:s}function J(i){try{let e=new URL(i),s=e.pathname.replace(/\/$/,"").split("/").filter(Boolean).pop();return s?`${e.hostname.replace(/^www\./,"")}/${s}`:e.hostname.replace(/^www\./,"")}catch(e){return"Source"}}function F(i){var s;let e=new Set,t=[];for(let r of i!=null?i:[]){let n=(s=r==null?void 0:r.url)==null?void 0:s.trim();!n||e.has(n)||(e.add(n),t.push(r))}return t.slice(0,5)}function _(i){let e=F(i);return e.length?`
-    <div class="source-list" aria-label="Sources used">
-      <div class="source-list-title">Sources used</div>
+  `}var L="rr_chat_session",C="rr_chat_messages";function G(o){var t,s;let e=document.querySelectorAll("script[src*='widget.js']");for(let r of e)try{return new URL(r.src).origin}catch(n){}return(s=(t=window.ChatWidget)==null?void 0:t.apiBase)!=null?s:""}function H(o){return new Date(o).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}function p(o){return o.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}function R(o){var r;let e=o.trim().replace(/\s+/g," "),s=((r=e.split("|").map(n=>n.trim()).filter(Boolean)[0])!=null?r:e)||"Source";return s.length>32?`${s.slice(0,29)}\u2026`:s}function J(o){try{let e=new URL(o),s=e.pathname.replace(/\/$/,"").split("/").filter(Boolean).pop();return s?`${e.hostname.replace(/^www\./,"")}/${s}`:e.hostname.replace(/^www\./,"")}catch(e){return"Source"}}function X(o){var s;let e=new Set,t=[];for(let r of o!=null?o:[]){let n=(s=r==null?void 0:r.url)==null?void 0:s.trim();!n||e.has(n)||(e.add(n),t.push(r))}return t.slice(0,5)}function j(o){let e=X(o);return e.length?`
+    <div class="source-list" aria-label="Pages cited">
+      <div class="source-list-title">Pages cited</div>
       <div class="source-list-links">
-        ${e.map(t=>{var r;let s=(r=t.title)!=null&&r.trim()?K(t.title):J(t.url);return`<a class="source-chip" href="${d(t.url)}" target="_blank" rel="noopener">${d(s)}</a>`}).join("")}
+        ${e.map(t=>{var r;let s=(r=t.title)!=null&&r.trim()?R(t.title):J(t.url);return`<a class="source-chip" href="${p(t.url)}" target="_blank" rel="noopener">${p(s)}</a>`}).join("")}
       </div>
     </div>
-  `:""}function V(i){let e=(i!=null?i:"").trim().replace(/\s+/g," ");return e?e.length>18?"Ask":`Ask ${e}`:"Ask"}function Q(i){return i.trim().replace(/\s+/g," ").replace(/[?.!]+$/g,"")}function X(i){return i.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}function N(i,e){var h;let t=[],s=`__LINK_${Math.random().toString(36).slice(2)}_`,r=o=>{let a=`${s}${t.length}__`;return t.push(o),a},n=i;if(n=n.replace(/\[([^\]]{1,120})\]\(((?:https?):\/\/[^\s<>"')]{1,2048})\)/g,(o,a,g)=>{let p=String(a).trim(),c=String(g).trim();return!p||!c?"":r(`<a class="intext-source" href="${d(c)}" target="_blank" rel="noopener">${d(p)}</a>`)}),n=n.replace(/\[\[([^\]|]{1,120})\|((?:https?):\/\/[^\s<>"']{1,2048})\]\]/g,(o,a,g)=>{let p=String(a).trim(),c=String(g).trim();return!p||!c?"":r(`<a class="intext-source" href="${d(c)}" target="_blank" rel="noopener">${d(p)}</a>`)}),n=n.replace(/\bhttps?:\/\/[^\s<>"')]+/gi,o=>r(`<a class="intext-source" href="${d(o)}" target="_blank" rel="noopener">${d(o)}</a>`)),e!=null&&e.length)for(let o of e.slice(0,5)){if(!(o!=null&&o.url))continue;let a=(o.title||"").trim(),g=((h=a.split("|")[0])!=null?h:a).trim(),p=K(a||o.url||"Source"),c=Array.from(new Set([g,a,p].map(b=>b.trim()).filter(Boolean))),m=!1;for(let b of c){let w=new RegExp(`\\b${X(b)}\\b`,"i");if(w.test(n)){n=n.replace(w,r(`<a class="intext-source" href="${d(o.url)}" target="_blank" rel="noopener">${d(b)}</a>`)),m=!0;break}}}let l=d(n);for(let o=0;o<t.length;o++)l=l.replace(`${s}${o}__`,t[o]);return l}var A=class{constructor(e){f(this,"shadow");f(this,"host");f(this,"config",null);f(this,"messages",[]);f(this,"siteId");f(this,"baseUrl");f(this,"previewMode");f(this,"sessionId",null);f(this,"token",null);f(this,"sessionError",null);f(this,"isOpen",!1);f(this,"isStreaming",!1);var t;this.siteId=e,this.baseUrl=G(e),this.previewMode=((t=window.ChatWidget)==null?void 0:t.preview)===!0,this.host=document.createElement("div"),this.host.id="rr-chat-widget",this.host.style.cssText="position:fixed;z-index:999999;",document.body.appendChild(this.host),this.shadow=this.host.attachShadow({mode:"open"}),this.init()}async init(){var s,r;try{let n=new URLSearchParams({siteId:this.siteId});this.previewMode&&n.set("preview","1");let l=await fetch(`${this.baseUrl}/api/v1/widget-config?${n.toString()}`);if(!l.ok){this.host.remove();return}this.config=await l.json()}catch(n){this.config={id:this.siteId,primaryColor:"#6366f1",title:"Alt",greeting:"Hi! How can I help you today?",allowedTopics:[],preview:this.previewMode}}if(!this.host.isConnected)return;let e=(s=sessionStorage.getItem(this.storageKey(M)))!=null?s:this.previewMode?null:sessionStorage.getItem(`${M}:${this.siteId}`);if(e)try{let{sessionId:n,token:l}=JSON.parse(e);this.sessionId=n,this.token=l}catch(n){}let t=(r=sessionStorage.getItem(this.storageKey(C)))!=null?r:this.previewMode?null:sessionStorage.getItem(`${C}:${this.siteId}`);if(t)try{this.messages=JSON.parse(t)}catch(n){}this.render(),this.attachListeners()}storageKey(e){return`${e}:${this.siteId}:${this.previewMode?"preview":"live"}`}isPreviewOnly(){var e;return((e=this.config)==null?void 0:e.preview)===!0&&this.config.isActive===!1}previewBlockedCopy(){var t;let e=(t=this.config)==null?void 0:t.readiness;return e!=null&&e.hasWebsite?e!=null&&e.hasAllowedDomains?e!=null&&e.hasKnowledgeBase?{label:"Draft preview",body:"The widget is ready. Publish it from setup to enable live answer testing.",placeholder:"Publish widget to test answers"}:{label:"Source pages needed",body:"Read source pages in setup before this widget can answer questions.",placeholder:"Read source pages to test answers"}:{label:"Allowed domains needed",body:"Add the website domain in setup before this widget can be published.",placeholder:"Add allowed domain to test answers"}:{label:"Website needed",body:"Set the website URL in setup before this widget can be published.",placeholder:"Set website URL to test answers"}}saveSession(){this.sessionId&&this.token&&sessionStorage.setItem(this.storageKey(M),JSON.stringify({sessionId:this.sessionId,token:this.token})),sessionStorage.setItem(this.storageKey(C),JSON.stringify(this.messages))}render(){var g,p,c,m,b,w,$,T,B,L,u,x;let e=(p=(g=this.config)==null?void 0:g.primaryColor)!=null?p:"#6366f1",t=(w=(b=(c=this.config)==null?void 0:c.logoUrl)!=null?b:(m=window.ChatWidget)==null?void 0:m.pageIconUrl)!=null?w:null,s=(T=($=this.config)==null?void 0:$.title)!=null?T:"Alt",r=this.isPreviewOnly(),n=this.previewBlockedCopy(),l=r?"Preview only":(B=this.config)!=null&&B.preview?"Preview":"Online",h=r?"Preview widget":V(s),o=r?"Preview widget":"Ask a question",a=r?n.placeholder:"Ask a question";this.shadow.innerHTML=`
-      <style>${j(e)}</style>
+  `:""}function F(o){return o.trim().replace(/\s+/g," ").replace(/[?.!]+$/g,"")}function V(o){return o.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}function N(o,e){var f;let t=[],s=`__LINK_${Math.random().toString(36).slice(2)}_`,r=i=>{let a=`${s}${t.length}__`;return t.push(i),a},n=o;if(n=n.replace(/\[([^\]]{1,120})\]\(((?:https?):\/\/[^\s<>"')]{1,2048})\)/g,(i,a,h)=>{let d=String(a).trim(),c=String(h).trim();return!d||!c?"":r(`<a class="intext-source" href="${p(c)}" target="_blank" rel="noopener">${p(d)}</a>`)}),n=n.replace(/\[\[([^\]|]{1,120})\|((?:https?):\/\/[^\s<>"']{1,2048})\]\]/g,(i,a,h)=>{let d=String(a).trim(),c=String(h).trim();return!d||!c?"":r(`<a class="intext-source" href="${p(c)}" target="_blank" rel="noopener">${p(d)}</a>`)}),n=n.replace(/\bhttps?:\/\/[^\s<>"')]+/gi,i=>r(`<a class="intext-source" href="${p(i)}" target="_blank" rel="noopener">${p(i)}</a>`)),e!=null&&e.length)for(let i of e.slice(0,5)){if(!(i!=null&&i.url))continue;let a=(i.title||"").trim(),h=((f=a.split("|")[0])!=null?f:a).trim(),d=R(a||i.url||"Source"),c=Array.from(new Set([h,a,d].map(u=>u.trim()).filter(Boolean))),x=!1;for(let u of c){let b=new RegExp(`\\b${V(u)}\\b`,"i");if(b.test(n)){n=n.replace(b,r(`<a class="intext-source" href="${p(i.url)}" target="_blank" rel="noopener">${p(u)}</a>`)),x=!0;break}}}let l=p(n);for(let i=0;i<t.length;i++)l=l.replace(`${s}${i}__`,t[i]);return l}var z=class{constructor(e){m(this,"shadow");m(this,"host");m(this,"config",null);m(this,"messages",[]);m(this,"siteId");m(this,"baseUrl");m(this,"previewMode");m(this,"sessionId",null);m(this,"token",null);m(this,"sessionError",null);m(this,"isOpen",!1);m(this,"isStreaming",!1);var t;this.siteId=e,this.baseUrl=G(e),this.previewMode=((t=window.ChatWidget)==null?void 0:t.preview)===!0,this.host=document.createElement("div"),this.host.id="rr-chat-widget",this.host.style.cssText="position:fixed;z-index:999999;",document.body.appendChild(this.host),this.shadow=this.host.attachShadow({mode:"open"}),this.init()}async init(){var s,r;try{let n=new URLSearchParams({siteId:this.siteId});this.previewMode&&n.set("preview","1");let l=await fetch(`${this.baseUrl}/api/v1/widget-config?${n.toString()}`);if(!l.ok){this.host.remove();return}this.config=await l.json()}catch(n){this.config={id:this.siteId,primaryColor:"#6366f1",title:"Alt",greeting:"Hi! How can I help you today?",allowedTopics:[],preview:this.previewMode}}if(!this.host.isConnected)return;let e=(s=sessionStorage.getItem(this.storageKey(L)))!=null?s:this.previewMode?null:sessionStorage.getItem(`${L}:${this.siteId}`);if(e)try{let{sessionId:n,token:l}=JSON.parse(e);this.sessionId=n,this.token=l}catch(n){}let t=(r=sessionStorage.getItem(this.storageKey(C)))!=null?r:this.previewMode?null:sessionStorage.getItem(`${C}:${this.siteId}`);if(t)try{this.messages=JSON.parse(t)}catch(n){}this.render(),this.attachListeners()}storageKey(e){return`${e}:${this.siteId}:${this.previewMode?"preview":"live"}`}isPreviewOnly(){var e;return((e=this.config)==null?void 0:e.preview)===!0&&this.config.isActive===!1}previewBlockedCopy(){var t;let e=(t=this.config)==null?void 0:t.readiness;return e!=null&&e.hasWebsite?e!=null&&e.hasAllowedDomains?e!=null&&e.hasKnowledgeBase?{label:"Draft preview",body:"The widget is ready. Publish it from setup to enable live answer testing.",placeholder:"Publish widget to test answers"}:{label:"Knowledge needed",body:"Add knowledge in setup before this widget can answer questions.",placeholder:"Add knowledge to test answers"}:{label:"Allowed domains needed",body:"Add the website domain in setup before this widget can be published.",placeholder:"Add allowed domain to test answers"}:{label:"Website needed",body:"Set the website URL in setup before this widget can be published.",placeholder:"Set website URL to test answers"}}saveSession(){this.sessionId&&this.token&&sessionStorage.setItem(this.storageKey(L),JSON.stringify({sessionId:this.sessionId,token:this.token})),sessionStorage.setItem(this.storageKey(C),JSON.stringify(this.messages))}render(){var a,h,d,c,x,u,b,$,S,M,T,g;let e=(h=(a=this.config)==null?void 0:a.primaryColor)!=null?h:"#6366f1",t=(u=(x=(d=this.config)==null?void 0:d.logoUrl)!=null?x:(c=window.ChatWidget)==null?void 0:c.pageIconUrl)!=null?u:null,s=($=(b=this.config)==null?void 0:b.title)!=null?$:"Alt",r=this.isPreviewOnly(),n=this.previewBlockedCopy(),l=r?"Preview only":(S=this.config)!=null&&S.preview?"Preview":"Online",f=r?"Preview widget":"Ask a question",i=r?n.placeholder:"Ask a question";this.shadow.innerHTML=`
+      <style>${_(e)}</style>
 
       <div id="nudge">
-        <div class="nudge-text">${d(o)}</div>
+        <div class="nudge-text">${p(f)}</div>
         <button id="close-nudge" aria-label="Close nudge">&times;</button>
       </div>
 
       <button id="launcher" aria-label="Open chat" title="Open chat">
-        <span class="launcher-face">
-          ${t?`<img class="launcher-logo" alt="" src="${d(t)}" onerror="this.remove()" />`:`<svg class="icon-chat" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/>
-                </svg>`}
-        </span>
-        <span class="launcher-text">${d(h)}</span>
+        ${t?`<img class="launcher-logo" alt="" src="${p(t)}" onerror="this.remove()" />`:""}
+        <svg class="icon-chat" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M11.053 2.524a1 1 0 0 1 1.894 0l2.06 6.513a1 1 0 0 0 .629.629l6.513 2.06a1 1 0 0 1 0 1.894l-6.513 2.06a1 1 0 0 0-.629.629l-2.06 6.513a1 1 0 0 1-1.894 0l-2.06-6.513a1 1 0 0 0-.629-.629l-6.513-2.06a1 1 0 0 1 0-1.894l6.513-2.06a1 1 0 0 0 .629-.629l2.06-6.513z"/>
+          <path d="M19.553 1.524a.5.5 0 0 1 .894 0l.76 2.413a.5.5 0 0 0 .329.329l2.413.76a.5.5 0 0 1 0 .894l-2.413.76a.5.5 0 0 0-.329.329l-.76 2.413a.5.5 0 0 1-.894 0l-.76-2.413a.5.5 0 0 0-.329-.329l-2.413-.76a.5.5 0 0 1 0-.894l2.413-.76a.5.5 0 0 0 .329-.329l.76-2.413z"/>
+        </svg>
         <svg class="icon-close" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
           <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
         </svg>
       </button>
 
       <div id="panel" role="dialog" aria-label="Chat window">
+        <button id="resize-grip" aria-label="Resize chat window" title="Resize"></button>
         <div id="header">
           <div id="header-avatar">
             <svg class="header-default-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
               <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/>
             </svg>
-            ${(L=this.config)!=null&&L.logoUrl?`<img alt="Logo" src="${d(this.config.logoUrl)}" onerror="this.remove()" />`:""}
+            ${(M=this.config)!=null&&M.logoUrl?`<img alt="Logo" src="${p(this.config.logoUrl)}" onerror="this.remove()" />`:""}
           </div>
           <div id="header-info">
-            <div id="header-title">${d(s)}</div>
+            <div id="header-title">${p(s)}</div>
             <div id="header-status">
               <span id="status-dot" class="${r?"muted":""}"></span>
               <span>${l}</span>
@@ -720,18 +822,18 @@
           </button>
         </div>
 
-        ${r?`<div id="mode-banner"><strong>${d(n.label)}</strong><span> ${d(n.body)}</span></div>`:""}
+        ${r?`<div id="mode-banner"><strong>${p(n.label)}</strong><span> ${p(n.body)}</span></div>`:""}
 
         <div id="messages" aria-live="polite" aria-atomic="false">
           ${this.renderGreeting()}
           ${this.renderStarterPrompts()}
-          ${this.messages.map(E=>this.renderMessage(E)).join("")}
+          ${this.messages.map(v=>this.renderMessage(v)).join("")}
         </div>
 
         <div id="input-area">
           <textarea
             id="input"
-            placeholder="${d(a)}"
+            placeholder="${p(i)}"
             rows="1"
             aria-label="Message input"
             ${r?"disabled":""}
@@ -745,37 +847,37 @@
         </div>
 
         <div id="powered-by">
-          <a href="${d((x=(u=this.config)==null?void 0:u.appUrl)!=null?x:this.baseUrl)}" target="_blank" rel="noopener">
+          <a href="${p((g=(T=this.config)==null?void 0:T.appUrl)!=null?g:this.baseUrl)}" target="_blank" rel="noopener">
             Powered by Alt Ego Labs
           </a>
         </div>
       </div>
-    `}renderGreeting(){var e;return!((e=this.config)!=null&&e.greeting)||this.messages.length>0?"":`<div id="greeting">${d(this.config.greeting)}</div>`}starterPrompts(){var s,r;let e=((r=(s=this.config)==null?void 0:s.allowedTopics)!=null?r:[]).map(Q).filter(Boolean).slice(0,3).map(n=>`What should I know about ${n}?`),t=["What can you help me with?","What are the most important details?","Where should I get started?"];return Array.from(new Set([...e,...t])).slice(0,3)}renderStarterPrompts(){if(this.messages.length>0||this.isPreviewOnly())return"";let e=this.starterPrompts();return e.length?`
+    `}renderGreeting(){var e;return!((e=this.config)!=null&&e.greeting)||this.messages.length>0?"":`<div id="greeting">${p(this.config.greeting)}</div>`}starterPrompts(){var s,r;let e=((r=(s=this.config)==null?void 0:s.allowedTopics)!=null?r:[]).map(F).filter(Boolean).slice(0,3).map(n=>`What should I know about ${n}?`),t=["What can you help me with?","What are the most important details?","Where should I get started?"];return Array.from(new Set([...e,...t])).slice(0,3)}renderStarterPrompts(){if(this.messages.length>0||this.isPreviewOnly())return"";let e=this.starterPrompts();return e.length?`
       <div id="starter-prompts" aria-label="Suggested questions">
         <div class="starter-title">Try asking</div>
         <div class="starter-list">
           ${e.map(t=>`
-                <button type="button" class="starter-prompt" data-starter-prompt="${d(t)}">
-                  ${d(t)}
+                <button type="button" class="starter-prompt" data-starter-prompt="${p(t)}">
+                  ${p(t)}
                 </button>
               `).join("")}
         </div>
       </div>
     `:""}renderMessage(e){return`
       <div class="message ${e.role}">
-        <div class="bubble">${e.role==="assistant"?N(e.content,e.sources):d(e.content)}</div>
-        ${e.role==="assistant"?_(e.sources):""}
+        <div class="bubble">${e.role==="assistant"?N(e.content,e.sources):p(e.content)}</div>
+        ${e.role==="assistant"?j(e.sources):""}
         <div class="message-time">${H(e.ts)}</div>
       </div>
     `}appendMessageToDOM(e,t){let s=document.createElement("div");s.className=`message ${e.role}`,t&&(s.id=t),s.innerHTML=`
-      <div class="bubble">${d(e.content)}</div>
+      <div class="bubble">${p(e.content)}</div>
       <div class="message-time">${H(e.ts)}</div>
     `;let r=this.shadow.getElementById("messages");return r==null||r.appendChild(s),this.scrollToBottom(),s}showTyping(){var t;let e=document.createElement("div");return e.className="message assistant",e.id="typing-indicator",e.innerHTML=`
       <div class="typing-wrap">
-        <div class="typing" aria-label="Assistant is checking sources">
+        <div class="typing" aria-label="Assistant is checking knowledge">
           <span></span><span></span><span></span>
         </div>
-        <div class="typing-label">Checking sources</div>
+        <div class="typing-label">Checking knowledge</div>
       </div>
-    `,(t=this.shadow.getElementById("messages"))==null||t.appendChild(e),this.scrollToBottom(),e}scrollToBottom(){let e=this.shadow.getElementById("messages");e&&(e.scrollTop=e.scrollHeight)}attachListeners(){let e=this.shadow.getElementById("launcher"),t=this.shadow.getElementById("reset-btn"),s=this.shadow.getElementById("close-btn"),r=this.shadow.getElementById("input"),n=this.shadow.getElementById("send-btn"),l=this.shadow.getElementById("nudge"),h=this.shadow.getElementById("close-nudge"),o=this.shadow.getElementById("messages");setTimeout(()=>{!this.isOpen&&l&&l.classList.add("visible")},3e3),h==null||h.addEventListener("click",a=>{a.stopPropagation(),l==null||l.classList.remove("visible")}),e.addEventListener("click",()=>{l==null||l.classList.remove("visible"),this.toggle()}),t==null||t.addEventListener("click",()=>this.resetChat()),s.addEventListener("click",()=>this.close()),r.addEventListener("keydown",a=>{a.key==="Enter"&&!a.shiftKey&&(a.preventDefault(),this.sendMessage())}),r.addEventListener("input",()=>{r.style.height="auto",r.style.height=`${Math.min(r.scrollHeight,120)}px`}),o==null||o.addEventListener("click",a=>{var m;let g=a.target instanceof HTMLElement?a.target:null,p=g==null?void 0:g.closest("[data-starter-prompt]");if(!p||this.isPreviewOnly())return;let c=(m=p.getAttribute("data-starter-prompt"))!=null?m:"";c.trim()&&(r.value=c,r.dispatchEvent(new Event("input",{bubbles:!0})),r.focus())}),n.addEventListener("click",()=>void this.sendMessage())}toggle(){this.isOpen?this.close():this.open()}open(){var t;this.isOpen=!0;let e=this.shadow.getElementById("launcher");e==null||e.classList.add("open"),e==null||e.setAttribute("aria-label","Close chat"),e==null||e.setAttribute("title","Close chat"),(t=this.shadow.getElementById("panel"))==null||t.classList.add("open"),this.isPreviewOnly()||setTimeout(()=>{var s;(s=this.shadow.getElementById("input"))==null||s.focus()},250),this.scrollToBottom()}close(){var t;this.isOpen=!1;let e=this.shadow.getElementById("launcher");e==null||e.classList.remove("open"),e==null||e.setAttribute("aria-label","Open chat"),e==null||e.setAttribute("title","Open chat"),(t=this.shadow.getElementById("panel"))==null||t.classList.remove("open")}async ensureSession(){var e;if(!(this.sessionId&&this.token)){this.sessionError=null;try{let t=await fetch(`${this.baseUrl}/api/v1/session`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({siteId:this.siteId})});if(t.ok){let r=await t.json();this.sessionId=r.sessionId,this.token=r.token,this.saveSession();return}let s=await t.json().catch(()=>null);this.sessionError=(e=s==null?void 0:s.error)!=null?e:"Widget session could not be created."}catch(t){this.sessionError="Widget session could not be created."}}}async sendMessage(){var g,p,c,m,b,w,$,T,B,L;if(this.isStreaming||this.isPreviewOnly())return;let e=this.shadow.getElementById("input"),t=this.shadow.getElementById("send-btn"),s=e.value.trim();if(!s)return;e.value="",e.style.height="auto",(g=this.shadow.getElementById("greeting"))==null||g.remove(),(p=this.shadow.getElementById("starter-prompts"))==null||p.remove();let r={role:"user",content:s,ts:Date.now()};this.messages.push(r),this.appendMessageToDOM(r),this.isStreaming=!0,t.disabled=!0,await this.ensureSession();let n=this.showTyping(),l="",h={role:"assistant",content:"",ts:Date.now()},o=null,a=null;try{if(!this.sessionId||!this.token)throw new Error((c=this.sessionError)!=null?c:"Widget session could not be created.");let u=await fetch(`${this.baseUrl}/api/v1/chat`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({siteId:this.siteId,messages:this.messages.slice(-10).map(({role:S,content:y,sources:k})=>U({role:S,content:y},k!=null&&k.length?{sources:k}:{})),sessionId:this.sessionId,token:this.token,stream:!0})});if(!u.ok||!u.body){let S=await u.text().catch(()=>""),y=(m=S.match(/"message"\s*:\s*"([^"]+)"/))!=null?m:S.match(/"error"\s*:\s*"([^"]+)"/);throw new Error((b=y==null?void 0:y[1])!=null?b:"Chat request failed.")}let x=u.body.getReader(),E=new TextDecoder,I="";for(n.remove(),o=document.createElement("div"),o.className="message assistant",a=document.createElement("div"),a.className="bubble",o.appendChild(a),(w=this.shadow.getElementById("messages"))==null||w.appendChild(o);;){let{done:S,value:y}=await x.read();if(S)break;I+=E.decode(y,{stream:!0});let k=I.split(`
-`);I=($=k.pop())!=null?$:"";for(let P of k){if(!P.startsWith("data: "))continue;let z=P.slice(6).trim();if(z!=="[DONE]")try{let v=JSON.parse(z);v.type==="token"&&v.content?(l+=v.content,a.textContent=l,this.scrollToBottom()):v.type==="sources"&&v.sources?h.sources=v.sources:v.type==="error"&&(l=((T=v.message)==null?void 0:T.trim())||"Sorry, something went wrong. Please try again.",a.textContent=l,this.scrollToBottom())}catch(v){}}}}catch(u){n.remove();let x=u instanceof Error?u.message:"";l=/domain not allowed|origin header|required|session/i.test(x)?"This widget is not enabled for this domain yet. Update the allowed domains in setup, then try again.":"Sorry, I couldn't connect. Please try again.",o||(o=document.createElement("div"),o.className="message assistant",a=document.createElement("div"),a.className="bubble",o.appendChild(a),(B=this.shadow.getElementById("messages"))==null||B.appendChild(o)),a&&(a.textContent=l)}finally{if(o){a&&(a.innerHTML=N(l,h.sources));let u=_(h.sources);if(u){let E=document.createElement("div");E.innerHTML=u.trim();let I=E.firstElementChild;I&&o.appendChild(I)}let x=document.createElement("div");x.className="message-time",x.textContent=H(Date.now()),o.appendChild(x)}h.content=l,this.messages.push(h),this.saveSession(),this.scrollToBottom(),this.isStreaming=!1,t.disabled=!1,(L=this.shadow.getElementById("input"))==null||L.focus()}}resetChat(){if(this.isStreaming)return;this.messages=[],this.sessionId=null,this.token=null,sessionStorage.removeItem(this.storageKey(M)),sessionStorage.removeItem(this.storageKey(C)),sessionStorage.removeItem(`${M}:${this.siteId}`),sessionStorage.removeItem(`${C}:${this.siteId}`);let e=this.shadow.getElementById("messages");e&&(e.innerHTML=`${this.renderGreeting()}${this.renderStarterPrompts()}`),this.scrollToBottom()}};function R(){let i=window.ChatWidget;if(!(i!=null&&i.siteId)){console.warn("[ALT EGO LABS] window.ChatWidget.siteId is required");return}new A(i.siteId)}document.readyState==="loading"?document.addEventListener("DOMContentLoaded",R):R();})();
+    `,(t=this.shadow.getElementById("messages"))==null||t.appendChild(e),this.scrollToBottom(),e}scrollToBottom(){let e=this.shadow.getElementById("messages");e&&(e.scrollTop=e.scrollHeight)}attachListeners(){let e=this.shadow.getElementById("launcher"),t=this.shadow.getElementById("reset-btn"),s=this.shadow.getElementById("close-btn"),r=this.shadow.getElementById("panel"),n=this.shadow.getElementById("resize-grip"),l=this.shadow.getElementById("input"),f=this.shadow.getElementById("send-btn"),i=this.shadow.getElementById("nudge"),a=this.shadow.getElementById("close-nudge"),h=this.shadow.getElementById("messages");setTimeout(()=>{!this.isOpen&&i&&i.classList.add("visible")},3e3),a==null||a.addEventListener("click",d=>{d.stopPropagation(),i==null||i.classList.remove("visible")}),e.addEventListener("click",()=>{i==null||i.classList.remove("visible"),this.toggle()}),t==null||t.addEventListener("click",()=>this.resetChat()),s.addEventListener("click",()=>this.close()),l.addEventListener("keydown",d=>{d.key==="Enter"&&!d.shiftKey&&(d.preventDefault(),this.sendMessage())}),l.addEventListener("input",()=>{l.style.height="auto",l.style.height=`${Math.min(l.scrollHeight,120)}px`}),h==null||h.addEventListener("click",d=>{var b;let c=d.target instanceof HTMLElement?d.target:null,x=c==null?void 0:c.closest("[data-starter-prompt]");if(!x||this.isPreviewOnly())return;let u=(b=x.getAttribute("data-starter-prompt"))!=null?b:"";u.trim()&&(l.value=u,l.dispatchEvent(new Event("input",{bubbles:!0})),l.focus())}),f.addEventListener("click",()=>void this.sendMessage()),n&&n.addEventListener("pointerdown",d=>{d.preventDefault(),n.setPointerCapture(d.pointerId);let c=r.getBoundingClientRect().width,x=r.getBoundingClientRect().height,u=d.clientX,b=d.clientY,$=340,S=460,M=Math.min(window.innerWidth-32,720),T=Math.min(window.innerHeight-120,900),g=B=>{let E=B.clientX-u,I=B.clientY-b,w=Math.max($,Math.min(M,c-E)),y=Math.max(S,Math.min(T,x-I));r.style.width=`${Math.round(w)}px`,r.style.height=`${Math.round(y)}px`},v=()=>{window.removeEventListener("pointermove",g),window.removeEventListener("pointerup",v)};window.addEventListener("pointermove",g),window.addEventListener("pointerup",v,{once:!0})})}toggle(){this.isOpen?this.close():this.open()}open(){var t;this.isOpen=!0;let e=this.shadow.getElementById("launcher");e==null||e.classList.add("open"),e==null||e.setAttribute("aria-label","Close chat"),e==null||e.setAttribute("title","Close chat"),(t=this.shadow.getElementById("panel"))==null||t.classList.add("open"),this.isPreviewOnly()||setTimeout(()=>{var s;(s=this.shadow.getElementById("input"))==null||s.focus()},250),this.scrollToBottom()}close(){var t;this.isOpen=!1;let e=this.shadow.getElementById("launcher");e==null||e.classList.remove("open"),e==null||e.setAttribute("aria-label","Open chat"),e==null||e.setAttribute("title","Open chat"),(t=this.shadow.getElementById("panel"))==null||t.classList.remove("open")}async ensureSession(){var e;if(!(this.sessionId&&this.token)){this.sessionError=null;try{let t=await fetch(`${this.baseUrl}/api/v1/session`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({siteId:this.siteId})});if(t.ok){let r=await t.json();this.sessionId=r.sessionId,this.token=r.token,this.saveSession();return}let s=await t.json().catch(()=>null);this.sessionError=(e=s==null?void 0:s.error)!=null?e:"Widget session could not be created."}catch(t){this.sessionError="Widget session could not be created."}}}async sendMessage(){var h,d,c,x,u,b,$,S,M,T;if(this.isStreaming||this.isPreviewOnly())return;let e=this.shadow.getElementById("input"),t=this.shadow.getElementById("send-btn"),s=e.value.trim();if(!s)return;e.value="",e.style.height="auto",(h=this.shadow.getElementById("greeting"))==null||h.remove(),(d=this.shadow.getElementById("starter-prompts"))==null||d.remove();let r={role:"user",content:s,ts:Date.now()};this.messages.push(r),this.appendMessageToDOM(r),this.isStreaming=!0,t.disabled=!0,await this.ensureSession();let n=this.showTyping(),l="",f={role:"assistant",content:"",ts:Date.now()},i=null,a=null;try{if(!this.sessionId||!this.token)throw new Error((c=this.sessionError)!=null?c:"Widget session could not be created.");let g=await fetch(`${this.baseUrl}/api/v1/chat`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({siteId:this.siteId,messages:this.messages.slice(-10).map(({role:I,content:w,sources:y})=>U({role:I,content:w},y!=null&&y.length?{sources:y}:{})),sessionId:this.sessionId,token:this.token,stream:!0})});if(!g.ok||!g.body){let I=await g.text().catch(()=>""),w=(x=I.match(/"message"\s*:\s*"([^"]+)"/))!=null?x:I.match(/"error"\s*:\s*"([^"]+)"/);throw new Error((u=w==null?void 0:w[1])!=null?u:"Chat request failed.")}let v=g.body.getReader(),B=new TextDecoder,E="";for(n.remove(),i=document.createElement("div"),i.className="message assistant",a=document.createElement("div"),a.className="bubble",i.appendChild(a),(b=this.shadow.getElementById("messages"))==null||b.appendChild(i);;){let{done:I,value:w}=await v.read();if(I)break;E+=B.decode(w,{stream:!0});let y=E.split(`
+`);E=($=y.pop())!=null?$:"";for(let O of y){if(!O.startsWith("data: "))continue;let P=O.slice(6).trim();if(P!=="[DONE]")try{let k=JSON.parse(P);k.type==="token"&&k.content?(l+=k.content,a.textContent=l,this.scrollToBottom()):k.type==="sources"&&k.sources?f.sources=k.sources:k.type==="error"&&(l=((S=k.message)==null?void 0:S.trim())||"Sorry, something went wrong. Please try again.",a.textContent=l,this.scrollToBottom())}catch(k){}}}}catch(g){n.remove();let v=g instanceof Error?g.message:"";l=/domain not allowed|origin header|required|session/i.test(v)?"This widget is not enabled for this domain yet. Update the allowed domains in setup, then try again.":"Sorry, I couldn't connect. Please try again.",i||(i=document.createElement("div"),i.className="message assistant",a=document.createElement("div"),a.className="bubble",i.appendChild(a),(M=this.shadow.getElementById("messages"))==null||M.appendChild(i)),a&&(a.textContent=l)}finally{if(i){a&&(a.innerHTML=N(l,f.sources));let g=j(f.sources);if(g){let B=document.createElement("div");B.innerHTML=g.trim();let E=B.firstElementChild;E&&i.appendChild(E)}let v=document.createElement("div");v.className="message-time",v.textContent=H(Date.now()),i.appendChild(v)}f.content=l,this.messages.push(f),this.saveSession(),this.scrollToBottom(),this.isStreaming=!1,t.disabled=!1,(T=this.shadow.getElementById("input"))==null||T.focus()}}resetChat(){if(this.isStreaming)return;this.messages=[],this.sessionId=null,this.token=null,sessionStorage.removeItem(this.storageKey(L)),sessionStorage.removeItem(this.storageKey(C)),sessionStorage.removeItem(`${L}:${this.siteId}`),sessionStorage.removeItem(`${C}:${this.siteId}`);let e=this.shadow.getElementById("messages");e&&(e.innerHTML=`${this.renderGreeting()}${this.renderStarterPrompts()}`),this.scrollToBottom()}};function Y(){let o=window.ChatWidget;if(!(o!=null&&o.siteId)){console.warn("[ALT EGO LABS] window.ChatWidget.siteId is required");return}new z(o.siteId)}document.readyState==="loading"?document.addEventListener("DOMContentLoaded",Y):Y();})();

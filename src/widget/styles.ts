@@ -75,97 +75,158 @@ export function getStyles(primaryColor: string): string {
       right: 24px;
       bottom: 24px;
       z-index: 999998;
-      display: inline-flex;
-      height: 52px;
-      max-width: min(240px, calc(100vw - 32px));
+      display: flex;
+      width: 64px;
+      height: 64px;
       align-items: center;
       justify-content: center;
-      gap: 9px;
-      border: 1px solid color-mix(in srgb, var(--primary) 76%, #000);
-      border-radius: 14px;
-      background: var(--primary);
-      color: #ffffff;
-      box-shadow: 0 12px 28px color-mix(in srgb, var(--primary) 30%, transparent);
+      border: none;
+      border-radius: 50%;
+      background: transparent;
       cursor: pointer;
       outline: none;
-      padding: 0 15px 0 12px;
-      transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+      animation: float-orb 4s ease-in-out infinite;
+      transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
       -webkit-tap-highlight-color: transparent;
     }
 
-    #launcher:hover {
-      box-shadow: 0 16px 34px color-mix(in srgb, var(--primary) 36%, transparent);
-      transform: translateY(-1px);
+    @keyframes float-orb {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-4px); }
     }
 
-    #launcher:active { transform: translateY(0); }
+    #launcher::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      z-index: -2;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--primary), color-mix(in srgb, var(--primary) 70%, #fff), color-mix(in srgb, var(--primary) 60%, #000), var(--primary));
+      background-size: 300% 300%;
+      box-shadow: 0 8px 32px color-mix(in srgb, var(--primary) 50%, transparent);
+      animation: gradient-spin 6s ease infinite, morph-blob 8s ease-in-out infinite alternate;
+      transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    #launcher::after {
+      content: '';
+      position: absolute;
+      inset: 2px;
+      z-index: -1;
+      border-radius: 50%;
+      background: linear-gradient(to bottom right, rgba(255,255,255,0.4), rgba(255,255,255,0.05));
+      box-shadow: inset 0 2px 4px rgba(255,255,255,0.7), inset 0 -4px 10px rgba(0,0,0,0.15);
+      animation: morph-blob 8s ease-in-out infinite alternate;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    @keyframes gradient-spin {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+
+    @keyframes morph-blob {
+      0% { border-radius: 50% 50% 50% 50% / 50% 50% 50% 50%; }
+      33% { border-radius: 55% 45% 55% 45% / 45% 55% 45% 55%; }
+      66% { border-radius: 45% 55% 45% 55% / 55% 45% 55% 45%; }
+      100% { border-radius: 50% 50% 50% 50% / 50% 50% 50% 50%; }
+    }
+
+    #launcher:hover {
+      animation-play-state: paused;
+      transform: scale(1.1) !important;
+    }
+
+    #launcher:hover::before,
+    #launcher:hover::after {
+      border-radius: 20px !important;
+      animation-play-state: paused;
+    }
+
+    #launcher:hover::before {
+      box-shadow: 0 12px 40px color-mix(in srgb, var(--primary) 70%, transparent);
+    }
+
+    #launcher:active { transform: scale(0.96) translateY(0) !important; }
 
     #launcher:focus-visible {
-      box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 18%, transparent), 0 12px 28px color-mix(in srgb, var(--primary) 30%, transparent);
-    }
-
-    .launcher-face {
-      display: flex;
-      width: 28px;
-      height: 28px;
-      flex: 0 0 auto;
-      align-items: center;
-      justify-content: center;
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 18%, transparent);
     }
 
     #launcher svg {
-      width: 22px;
-      height: 22px;
-      fill: none;
-      stroke: currentColor;
-      stroke-width: 2;
-      stroke-linecap: round;
-      stroke-linejoin: round;
+      width: 28px;
+      height: 28px;
+      z-index: 10;
+      fill: #ffffff;
+      filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));
+      transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease;
+    }
+
+    #launcher .icon-chat {
+      animation: sparkle-pulse 3s ease-in-out infinite alternate;
+    }
+
+    @keyframes sparkle-pulse {
+      0% { transform: scale(0.95); filter: drop-shadow(0 0 4px rgba(255,255,255,0.4)); }
+      100% { transform: scale(1.05); filter: drop-shadow(0 0 12px rgba(255,255,255,0.9)); }
     }
 
     #launcher .launcher-logo {
-      width: 28px;
-      height: 28px;
-      border: 1px solid rgba(255,255,255,0.55);
-      border-radius: 8px;
-      background: #ffffff;
+      position: absolute;
+      z-index: 10;
+      width: 36px;
+      height: 36px;
+      border: 1px solid rgba(255,255,255,0.6);
+      border-radius: 50%;
+      background: rgba(255,255,255,0.95);
       object-fit: cover;
-    }
-
-    .launcher-text {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font-size: 14px;
-      font-weight: 750;
-      letter-spacing: 0;
+      box-shadow: 0 6px 14px rgba(0,0,0,0.18);
+      opacity: 1;
+      transition: opacity 0.2s ease;
     }
 
     #launcher .icon-close {
-      display: none;
-      width: 20px;
-      height: 20px;
-      fill: currentColor;
-      stroke: none;
+      position: absolute;
+      opacity: 0;
+      transform: rotate(-90deg) scale(0.5);
+    }
+
+    #launcher.open .launcher-logo,
+    #launcher.open .icon-chat {
+      opacity: 0;
+    }
+
+    #launcher.open .icon-chat {
+      animation: none;
+      transform: rotate(90deg) scale(0.5);
     }
 
     #launcher.open {
-      width: 52px;
-      padding: 0;
-      border-color: var(--border);
-      background: #ffffff;
-      color: var(--text);
-      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+      animation: none !important;
+      transform: scale(0.9) !important;
     }
 
-    #launcher.open .launcher-face,
-    #launcher.open .launcher-text {
-      display: none;
+    #launcher.open::before,
+    #launcher.open::after {
+      border-radius: 50% !important;
+      background: var(--bg);
+      box-shadow: var(--shadow) !important;
+      animation: none !important;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+
+    #launcher.open svg {
+      fill: var(--text);
+      filter: none;
     }
 
     #launcher.open .icon-close {
-      display: block;
+      opacity: 1;
+      transform: rotate(0deg) scale(1);
     }
 
     #panel {
@@ -191,6 +252,44 @@ export function getStyles(primaryColor: string): string {
       transform: translateY(12px);
       transform-origin: bottom right;
       transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+
+    #resize-grip {
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 10;
+      width: 36px;
+      height: 36px;
+      border: none;
+      border-top-left-radius: 16px;
+      background: transparent;
+      cursor: nwse-resize;
+      opacity: 0.55;
+      transition: background 0.2s ease, opacity 0.2s ease;
+    }
+
+    #resize-grip:hover {
+      background: radial-gradient(circle at top left, rgba(17,24,39,0.08) 40%, transparent 70%);
+      opacity: 1;
+    }
+
+    #resize-grip::before {
+      content: "";
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      width: 8px;
+      height: 8px;
+      border-top: 2px solid rgba(17,24,39,0.42);
+      border-left: 2px solid rgba(17,24,39,0.42);
+      border-top-left-radius: 2px;
+      transition: border-color 0.2s ease, transform 0.2s ease;
+    }
+
+    #resize-grip:hover::before {
+      border-color: rgba(17,24,39,0.72);
+      transform: translate(-1.5px, -1.5px);
     }
 
     #panel.open {
@@ -658,7 +757,10 @@ export function getStyles(primaryColor: string): string {
       #launcher {
         right: 16px;
         bottom: 16px;
-        max-width: calc(100vw - 32px);
+      }
+
+      #resize-grip {
+        display: none;
       }
 
       .message {

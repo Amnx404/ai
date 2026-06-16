@@ -121,12 +121,6 @@ function renderSourceList(
   `;
 }
 
-function launcherLabel(title: string | undefined): string {
-  const cleanTitle = (title ?? "").trim().replace(/\s+/g, " ");
-  if (!cleanTitle) return "Ask";
-  return cleanTitle.length > 18 ? "Ask" : `Ask ${cleanTitle}`;
-}
-
 function cleanPromptTopic(topic: string): string {
   return topic.trim().replace(/\s+/g, " ").replace(/[?.!]+$/g, "");
 }
@@ -362,7 +356,6 @@ export class ChatWidget {
     const isPreviewOnly = this.isPreviewOnly();
     const previewBlockedCopy = this.previewBlockedCopy();
     const statusText = isPreviewOnly ? "Preview only" : this.config?.preview ? "Preview" : "Online";
-    const launcherText = isPreviewOnly ? "Preview widget" : launcherLabel(title);
     const nudgeText = isPreviewOnly ? "Preview widget" : "Ask a question";
     const inputPlaceholder = isPreviewOnly
       ? previewBlockedCopy.placeholder
@@ -376,22 +369,22 @@ export class ChatWidget {
       </div>
 
       <button id="launcher" aria-label="Open chat" title="Open chat">
-        <span class="launcher-face">
-          ${
-            launcherIcon
-              ? `<img class="launcher-logo" alt="" src="${escapeHtml(launcherIcon)}" onerror="this.remove()" />`
-              : `<svg class="icon-chat" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/>
-                </svg>`
-          }
-        </span>
-        <span class="launcher-text">${escapeHtml(launcherText)}</span>
+        ${
+          launcherIcon
+            ? `<img class="launcher-logo" alt="" src="${escapeHtml(launcherIcon)}" onerror="this.remove()" />`
+            : ""
+        }
+        <svg class="icon-chat" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M11.053 2.524a1 1 0 0 1 1.894 0l2.06 6.513a1 1 0 0 0 .629.629l6.513 2.06a1 1 0 0 1 0 1.894l-6.513 2.06a1 1 0 0 0-.629.629l-2.06 6.513a1 1 0 0 1-1.894 0l-2.06-6.513a1 1 0 0 0-.629-.629l-6.513-2.06a1 1 0 0 1 0-1.894l6.513-2.06a1 1 0 0 0 .629-.629l2.06-6.513z"/>
+          <path d="M19.553 1.524a.5.5 0 0 1 .894 0l.76 2.413a.5.5 0 0 0 .329.329l2.413.76a.5.5 0 0 1 0 .894l-2.413.76a.5.5 0 0 0-.329.329l-.76 2.413a.5.5 0 0 1-.894 0l-.76-2.413a.5.5 0 0 0-.329-.329l-2.413-.76a.5.5 0 0 1 0-.894l2.413-.76a.5.5 0 0 0 .329-.329l.76-2.413z"/>
+        </svg>
         <svg class="icon-close" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
           <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
         </svg>
       </button>
 
       <div id="panel" role="dialog" aria-label="Chat window">
+        <button id="resize-grip" aria-label="Resize chat window" title="Resize"></button>
         <div id="header">
           <div id="header-avatar">
             <svg class="header-default-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -558,6 +551,8 @@ export class ChatWidget {
     const launcher = this.shadow.getElementById("launcher")!;
     const resetBtn = this.shadow.getElementById("reset-btn") as HTMLButtonElement | null;
     const closeBtn = this.shadow.getElementById("close-btn")!;
+    const panel = this.shadow.getElementById("panel") as HTMLElement;
+    const grip = this.shadow.getElementById("resize-grip") as HTMLButtonElement | null;
     const input = this.shadow.getElementById("input") as HTMLTextAreaElement;
     const sendBtn = this.shadow.getElementById("send-btn") as HTMLButtonElement;
     const nudge = this.shadow.getElementById("nudge");
@@ -608,6 +603,40 @@ export class ChatWidget {
     });
 
     sendBtn.addEventListener("click", () => void this.sendMessage());
+
+    if (grip) {
+      grip.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        grip.setPointerCapture(e.pointerId);
+
+        const startW = panel.getBoundingClientRect().width;
+        const startH = panel.getBoundingClientRect().height;
+        const startX = e.clientX;
+        const startY = e.clientY;
+
+        const minW = 340;
+        const minH = 460;
+        const maxW = Math.min(window.innerWidth - 32, 720);
+        const maxH = Math.min(window.innerHeight - 120, 900);
+
+        const onMove = (ev: PointerEvent) => {
+          const dx = ev.clientX - startX;
+          const dy = ev.clientY - startY;
+          const nextW = Math.max(minW, Math.min(maxW, startW - dx));
+          const nextH = Math.max(minH, Math.min(maxH, startH - dy));
+          panel.style.width = `${Math.round(nextW)}px`;
+          panel.style.height = `${Math.round(nextH)}px`;
+        };
+
+        const onUp = () => {
+          window.removeEventListener("pointermove", onMove);
+          window.removeEventListener("pointerup", onUp);
+        };
+
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp, { once: true });
+      });
+    }
   }
 
   private toggle() {
