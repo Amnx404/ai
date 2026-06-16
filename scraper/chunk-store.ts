@@ -43,32 +43,47 @@ export async function storeKnowledgeChunks({
       const batchSize = 100;
       for (let i = 0; i < chunks.length; i += batchSize) {
         const batch = chunks.slice(i, i + batchSize);
-        await tx.knowledgeChunk.createMany({
-          data: batch.map((chunk) => {
-            const text = sanitizeDbText(chunk.text);
-            return {
-              siteId: normalizedSiteId,
-              namespace,
-              vectorId: sanitizeDbText(chunk.id),
-              runId: sanitizeDbText(runId),
-              url: sanitizeDbText(chunk.url ?? ""),
-              title: chunk.title == null ? null : sanitizeDbText(chunk.title),
-              description: chunk.description == null ? null : sanitizeDbText(chunk.description),
-              text,
+        const data = batch.map((chunk) => {
+          const text = sanitizeDbText(chunk.text);
+          return {
+            siteId: normalizedSiteId,
+            namespace,
+            vectorId: sanitizeDbText(chunk.id),
+            runId: sanitizeDbText(runId),
+            url: sanitizeDbText(chunk.url ?? ""),
+            title: chunk.title == null ? null : sanitizeDbText(chunk.title),
+            description: chunk.description == null ? null : sanitizeDbText(chunk.description),
+            text,
+            source: "scraper",
+            pageIndex: chunk.page_index ?? null,
+            chunkIndex: chunk.chunk_index ?? null,
+            chars: chunk.chars ?? text.length,
+            metadata: {
+              run_id: runId,
               source: "scraper",
-              pageIndex: chunk.page_index ?? null,
-              chunkIndex: chunk.chunk_index ?? null,
-              chars: chunk.chars ?? text.length,
-              metadata: {
-                run_id: runId,
-                source: "scraper",
-                page_index: chunk.page_index ?? null,
-                chunk_index: chunk.chunk_index ?? null,
-              } satisfies Prisma.InputJsonObject,
-            };
-          }),
-          skipDuplicates: true,
+              page_index: chunk.page_index ?? null,
+              chunk_index: chunk.chunk_index ?? null,
+            } satisfies Prisma.InputJsonObject,
+          };
         });
+
+        let inserted = 0;
+        try {
+          const result = await tx.knowledgeChunk.createMany({
+            data,
+            skipDuplicates: true,
+          });
+          inserted = result.count;
+        } catch {
+          for (const row of data) {
+            try {
+              await tx.knowledgeChunk.create({ data: row });
+              inserted++;
+            } catch (error) {
+              if (!isDuplicateError(error)) throw error;
+            }
+          }
+        }
 
         // Store embeddings via raw SQL — Prisma createMany can't write vector columns.
         const withEmbeddings = batch.filter((c) => c.embedding?.length);
@@ -88,7 +103,7 @@ export async function storeKnowledgeChunks({
           `;
         }
 
-        count += batch.length;
+        count += inserted;
       }
       return count;
     });
@@ -102,5 +117,9 @@ export async function storeKnowledgeChunks({
 function sanitizeDbText(value: string) {
   return value
     .replace(/\u0000/g, "")
-    .replace(/\\x/gi, "/x");
+    .replace(/\\/g, "/");
+}
+
+function isDuplicateError(error: unknown) {
+  return Boolean(error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "P2002");
 }
