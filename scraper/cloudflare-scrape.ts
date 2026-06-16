@@ -479,6 +479,40 @@ async function runStaticDiscoveryMarkdownScrape(opts: {
           error: message,
         },
       });
+
+      const fallbackMarkdown = htmlToLocalMarkdown(page.html, {
+        title: page.title,
+        url: page.url,
+      });
+      if (fallbackMarkdown) {
+        records.push({
+          url: page.url,
+          markdown: fallbackMarkdown,
+          metadata: {
+            url: page.url,
+            title: page.title ?? undefined,
+            status: page.statusCode ?? undefined,
+            depth: page.depth,
+            content_type: page.contentType ?? undefined,
+            links: page.links,
+            source: "static-discovery",
+            markdown_source: "local-html-fallback",
+            cloudflare_markdown_error: message,
+          },
+        });
+
+        await opts.emit({
+          event: "markdown_done",
+          message: `Converted ${records.length} pages with local HTML fallback`,
+          data: {
+            url: page.url,
+            depth: page.depth,
+            markdown_chars: fallbackMarkdown.length,
+            converted_pages: records.length,
+            fallback: "local-html",
+          },
+        });
+      }
     }
 
     if (opts.seedDelayMs > 0 && records.length < opts.maxPages) {
@@ -621,6 +655,77 @@ async function extractMarkdownWithRetry(opts: {
   }
 
   throw lastError instanceof Error ? lastError : new Error(String(lastError ?? "Cloudflare markdown failed"));
+}
+
+function htmlToLocalMarkdown(html: string, opts: { title: string | null; url: string }) {
+  const withoutNoise = html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<svg\b[\s\S]*?<\/svg>/gi, " ");
+
+  const withHeadings = withoutNoise
+    .replace(/<h1\b[^>]*>([\s\S]*?)<\/h1>/gi, (_, text) => `\n# ${cleanHtmlText(text)}\n`)
+    .replace(/<h2\b[^>]*>([\s\S]*?)<\/h2>/gi, (_, text) => `\n## ${cleanHtmlText(text)}\n`)
+    .replace(/<h3\b[^>]*>([\s\S]*?)<\/h3>/gi, (_, text) => `\n### ${cleanHtmlText(text)}\n`)
+    .replace(/<h4\b[^>]*>([\s\S]*?)<\/h4>/gi, (_, text) => `\n#### ${cleanHtmlText(text)}\n`)
+    .replace(
+      /<a\b[^>]*?\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`]+))[^>]*>([\s\S]*?)<\/a>/gi,
+      (_, doubleQuoted, singleQuoted, bare, text) => {
+        const label = cleanHtmlText(text);
+        const href = resolveMarkdownHref(doubleQuoted ?? singleQuoted ?? bare ?? "", opts.url);
+        if (!label && !href) return " ";
+        if (!href || label === href) return ` ${label || href} `;
+        return ` ${label} (${href}) `;
+      },
+    )
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(?:p|div|section|article|aside|header|footer|nav|main|li|tr|blockquote)>/gi, "\n")
+    .replace(/<li\b[^>]*>/gi, "\n- ");
+
+  const text = cleanHtmlText(withHeadings)
+    .replace(/[ \t]*\n[ \t]*/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (!text) return null;
+
+  const title = opts.title?.trim();
+  if (title && !text.toLowerCase().startsWith(title.toLowerCase())) {
+    return `# ${title}\n\nSource: ${opts.url}\n\n${text}`;
+  }
+  return `Source: ${opts.url}\n\n${text}`;
+}
+
+function cleanHtmlText(value: string) {
+  return decodeHtmlEntities(value.replace(/<[^>]+>/g, " "))
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\s+\n/g, "\n")
+    .replace(/\n\s+/g, "\n")
+    .trim();
+}
+
+function decodeHtmlEntities(value: string) {
+  return value
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/gi, "'");
+}
+
+function resolveMarkdownHref(rawHref: string, baseUrl: string) {
+  const trimmed = rawHref.trim();
+  if (!trimmed || /^(?:mailto|tel|javascript|data):/i.test(trimmed)) return "";
+  try {
+    const url = new URL(trimmed, baseUrl);
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return trimmed;
+  }
 }
 
 async function waitForCrawl(
