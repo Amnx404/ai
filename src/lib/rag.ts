@@ -1224,5 +1224,11 @@ function normalizeDisplayTitle(title: string, url?: string) {
     .replace(/\s+/g, " ")
     .trim();
 
+  const urlYear = url?.match(/\b20\d{2}\b/)?.[0];
+  const titleYear = out.match(/\b20\d{2}\b/)?.[0];
+  if (urlYear && titleYear && urlYear !== titleYear) {
+    out = out.replace(titleYear, urlYear);
+  }
+
   return out.replace(/\bRoboracer\b/g, "RoboRacer");
 }
