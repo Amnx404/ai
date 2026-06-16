@@ -181,6 +181,10 @@ export async function POST(req: NextRequest) {
       typeof scrapeConfig.cloudflare_markdown_retry_delay_ms === "number"
         ? scrapeConfig.cloudflare_markdown_retry_delay_ms
         : undefined,
+    cloudflare_markdown_timeout_ms:
+      typeof scrapeConfig.cloudflare_markdown_timeout_ms === "number"
+        ? scrapeConfig.cloudflare_markdown_timeout_ms
+        : undefined,
     cloudflare_crawl_options: objectRecord(scrapeConfig.cloudflare_crawl_options),
     cloudflare_markdown_options: objectRecord(scrapeConfig.cloudflare_markdown_options),
     cloudflare_crawl_purposes:

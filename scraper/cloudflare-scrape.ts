@@ -92,7 +92,15 @@ export async function runCloudflareScrape(
   const crawlPassRetries = cloudflareJobRetries(request);
   const perSeedLimit = cloudflarePerSeedLimit(request);
   const seedDelayMs = cloudflareSeedDelayMs(request);
-  const client = new CloudflareBrowserRunClient(opts.cloudflare);
+  const client = new CloudflareBrowserRunClient({
+    ...opts.cloudflare,
+    ...(discoveryMode === "static"
+      ? {
+          maxRetries: 0,
+          requestTimeoutMs: cloudflareMarkdownRequestTimeoutMs(request),
+        }
+      : {}),
+  });
 
   if (discoveryMode === "static") {
     return runStaticDiscoveryMarkdownScrape({
@@ -409,6 +417,7 @@ async function runStaticDiscoveryMarkdownScrape(opts: {
     userAgent: opts.request.user_agent,
     timeoutMs: cloudflareDiscoveryTimeoutMs(opts.request),
     delayMs: cloudflareDiscoveryDelayMs(opts.request),
+    parallelWorkers: opts.request.parallel_workers,
     onProgress: opts.emit,
   });
 
@@ -1261,6 +1270,15 @@ function cloudflareMarkdownRetryDelayMs(request: ScrapeRequest) {
     10_000,
     1000,
     120_000,
+  );
+}
+
+function cloudflareMarkdownRequestTimeoutMs(request: ScrapeRequest) {
+  return clampInteger(
+    request.cloudflare_markdown_timeout_ms ?? process.env.CLOUDFLARE_MARKDOWN_TIMEOUT_MS,
+    12_000,
+    1000,
+    45_000,
   );
 }
 

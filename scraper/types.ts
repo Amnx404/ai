@@ -33,6 +33,7 @@ export type ScrapeRequest = {
   cloudflare_discovery_delay_seconds?: number | null;
   cloudflare_markdown_retries?: number | null;
   cloudflare_markdown_retry_delay_ms?: number | null;
+  cloudflare_markdown_timeout_ms?: number | null;
   cloudflare_crawl_purposes?: Array<"search" | "ai-input" | "ai-train">;
   [key: string]: unknown;
 };

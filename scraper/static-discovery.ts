@@ -48,10 +48,12 @@ export async function discoverStaticPages(opts: {
   userAgent?: string;
   timeoutMs?: number;
   delayMs?: number;
+  parallelWorkers?: number;
   onProgress?: (event: StaticDiscoveryProgress) => void | Promise<void>;
 }): Promise<StaticDiscoveryResult> {
   const timeoutMs = opts.timeoutMs ?? 15_000;
   const delayMs = Math.max(0, opts.delayMs ?? 0);
+  const parallelWorkers = clampInteger(opts.parallelWorkers, 1, 1, 32);
   const queue: Array<{ url: string; depth: number }> = [];
   const known = new Map<string, number>();
   const visited = new Set<string>();
@@ -74,14 +76,21 @@ export async function discoverStaticPages(opts: {
       seed_count: queue.length,
       max_pages: opts.maxPages,
       max_depth: opts.maxDepth,
+      parallel_workers: parallelWorkers,
     },
   });
 
-  while (queue.length > 0 && fetchablePageCount(pages) < opts.maxPages) {
-    const item = queue.shift();
-    if (!item || visited.has(item.url)) continue;
-    visited.add(item.url);
+  const takeNextItem = () => {
+    while (queue.length > 0 && fetchablePageCount(pages) < opts.maxPages) {
+      const item = queue.shift();
+      if (!item || visited.has(item.url)) continue;
+      visited.add(item.url);
+      return item;
+    }
+    return null;
+  };
 
+  const processItem = async (item: { url: string; depth: number }) => {
     try {
       const fetched = await fetchHtml(item.url, {
         timeoutMs,
@@ -105,6 +114,7 @@ export async function discoverStaticPages(opts: {
               cache: assetTextCache,
             })
           : [];
+      const useUrlMarkdown = assetLinks.length > 0 && looksLikeSparseDynamicShell(fetched.html);
       const rawLinks = [...documentLinks, ...assetLinks];
       const links = filterLinks(rawLinks, opts);
 
@@ -116,7 +126,7 @@ export async function discoverStaticPages(opts: {
         statusCode: fetched.statusCode,
         contentType: fetched.contentType,
         links,
-        markdownSource: assetLinks.length > 0 ? "url" : "html",
+        markdownSource: useUrlMarkdown ? "url" : "html",
       });
 
       if (item.depth < opts.maxDepth) {
@@ -169,11 +179,51 @@ export async function discoverStaticPages(opts: {
         },
       });
     }
+  };
 
-    if (delayMs > 0 && queue.length > 0 && fetchablePageCount(pages) < opts.maxPages) {
-      await sleep(delayMs);
-    }
-  }
+  await new Promise<void>((resolve, reject) => {
+    let active = 0;
+    let settled = false;
+
+    const pump = () => {
+      if (settled) return;
+
+      try {
+        while (active < parallelWorkers && fetchablePageCount(pages) < opts.maxPages) {
+          const item = takeNextItem();
+          if (!item) break;
+
+          active += 1;
+          void processItem(item)
+            .then(async () => {
+              if (delayMs > 0 && queue.length > 0 && fetchablePageCount(pages) < opts.maxPages) {
+                await sleep(delayMs);
+              }
+            })
+            .then(
+              () => {
+                active -= 1;
+                pump();
+              },
+              (error) => {
+                settled = true;
+                reject(error);
+              },
+            );
+        }
+
+        if (active === 0 && (queue.length === 0 || fetchablePageCount(pages) >= opts.maxPages)) {
+          settled = true;
+          resolve();
+        }
+      } catch (error) {
+        settled = true;
+        reject(error);
+      }
+    };
+
+    pump();
+  });
 
   const failedUrlCount = pages.filter((page) => page.error).length;
   await opts.onProgress?.({
@@ -198,6 +248,20 @@ export async function discoverStaticPages(opts: {
 
 function fetchablePageCount(pages: StaticDiscoveryPage[]) {
   return pages.filter((page) => page.html?.trim() && !page.error).length;
+}
+
+function looksLikeSparseDynamicShell(html: string) {
+  const text = stripTags(
+    html
+      .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+      .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
+      .replace(/<svg\b[\s\S]*?<\/svg>/gi, " "),
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return text.length < 500;
 }
 
 async function extractSparsePageAssetLinks(
@@ -489,4 +553,10 @@ function decodeHtmlEntities(value: string) {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function clampInteger(value: unknown, fallback: number, min: number, max: number) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(number)));
 }

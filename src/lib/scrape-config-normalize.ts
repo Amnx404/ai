@@ -47,6 +47,7 @@ export function normalizeScrapeConfigObject(input: unknown): Record<string, unkn
     "cloudflare_discovery_delay_seconds",
     "cloudflare_markdown_retries",
     "cloudflare_markdown_retry_delay_ms",
+    "cloudflare_markdown_timeout_ms",
   ]) {
     if (!(key in out)) continue;
     const n = toFiniteNumber(out[key]);
