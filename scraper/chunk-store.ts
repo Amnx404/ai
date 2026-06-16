@@ -119,7 +119,24 @@ export async function storeKnowledgeChunks({
 }
 
 function sanitizeDbText(value: string) {
-  return value.replace(/\u0000/g, "");
+  let output = "";
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code === 0) continue;
+
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        output += value[i] + value[i + 1];
+        i++;
+      }
+      continue;
+    }
+
+    if (code >= 0xdc00 && code <= 0xdfff) continue;
+    output += value[i];
+  }
+  return output;
 }
 
 async function insertKnowledgeChunkRows(tx: Prisma.TransactionClient, rows: KnowledgeChunkInsertRow[]) {
