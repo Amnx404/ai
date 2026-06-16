@@ -950,7 +950,7 @@ export function HomePageClient({
       <Script id="chat-widget-config">
         {`window.ChatWidget = { siteId: "cmobwwqxn00l7ry1ysx2iyo9u" };`}
       </Script>
-      <Script async src="https://altegolabs.com/widget.js?v=restore-launcher" />
+      <Script async src="https://altegolabs.com/widget.js?v=current-page-context" />
     </main>
   );
 }

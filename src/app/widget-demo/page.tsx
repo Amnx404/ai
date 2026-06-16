@@ -434,7 +434,7 @@ export default async function WidgetDemoPage({
             }}
           />
           <Script
-            src={`${env.NEXTAUTH_URL}/widget.js?v=restore-launcher`}
+            src={`${env.NEXTAUTH_URL}/widget.js?v=current-page-context`}
             strategy="afterInteractive"
           />
         </>

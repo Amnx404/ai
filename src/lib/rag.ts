@@ -258,7 +258,7 @@ function currentYearQueryHint(query: string) {
 }
 
 function hasCurrentPageIntent(query: string) {
-  return /\b(this|current|same|here|above|the page|this page|current page|page i'?m on|page i am on|page we are on|where am i|what page)\b/i.test(
+  return /\b(this|current|same|here|above|screen|the page|this page|current page|current site|this site|page i'?m on|page i am on|page we are on|where am i|what page)\b/i.test(
     query,
   );
 }
@@ -288,6 +288,71 @@ function currentPageQueryHint(query: string, pageContext?: PageContext | null) {
     .slice(0, 700);
 }
 
+function asksForCurrentPageOverview(query: string) {
+  return (
+    /\b(do you|can you|are you able to|have you)\b.*\b(see|read|view|know|understand|access)\b.*\b(screen|page|site|website|here)\b/i.test(
+      query,
+    ) ||
+    /\bwhat(?:'s|s| is)\b.*\b(on\s+)?\b(this|current)\b.*\b(screen|page|site|website)\b/i.test(
+      query,
+    ) ||
+    /\b(what page|which page|where am i|describe this page|describe this screen|summari[sz]e this page|summari[sz]e this screen)\b/i.test(
+      query,
+    )
+  );
+}
+
+function currentPageOverviewResponse(pageContext: PageContext) {
+  const label = currentPageLabel(pageContext);
+  const host = currentPageHost(pageContext.url);
+  const summary = firstPageSummary(pageContext);
+  const headings = (pageContext.headings ?? [])
+    .map((heading) => heading.trim())
+    .filter((heading) => heading && heading.toLowerCase() !== label.toLowerCase())
+    .slice(0, 3);
+
+  const parts = [
+    `I have the current page context. This screen appears to be ${label}${host ? ` on ${host}` : ""}.`,
+  ];
+  if (summary) parts.push(summary.endsWith(".") ? summary : `${summary}.`);
+  if (headings.length) {
+    parts.push(`Visible sections include ${formatShortList(headings)}.`);
+  }
+  return parts.join(" ");
+}
+
+function currentPageLabel(pageContext: PageContext) {
+  return (
+    pageContext.title?.trim() ||
+    pageContext.headings?.find((heading) => heading.trim())?.trim() ||
+    currentPageHost(pageContext.url) ||
+    "this page"
+  );
+}
+
+function currentPageHost(rawUrl: string) {
+  try {
+    return new URL(rawUrl).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+function firstPageSummary(pageContext: PageContext) {
+  const source = (pageContext.description || pageContext.text || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!source) return "";
+  const firstSentence = source.match(/.{20,260}?[.!?](?:\s|$)/)?.[0]?.trim();
+  return (firstSentence ?? source.slice(0, 260)).trim();
+}
+
+function formatShortList(values: string[]) {
+  if (values.length <= 1) return values[0] ?? "";
+  if (values.length === 2) return `${values[0]} and ${values[1]}`;
+  return `${values.slice(0, -1).join(", ")}, and ${values.at(-1)}`;
+}
+
 function quickResponseForMessage(
   messages: ChatMessage[],
   hasKnowledgeBase: boolean,
@@ -304,6 +369,12 @@ function quickResponseForMessage(
     return "Hey! I can help answer questions about this site.";
   }
 
+  const asksForPageOverview = asksForCurrentPageOverview(lastUser);
+  if (asksForPageOverview) {
+    if (pageContext) return currentPageOverviewResponse(pageContext);
+    return "I do not have current page context for this chat, so I cannot tell what is on the screen. I can still answer from the site's indexed knowledge if you ask a specific question.";
+  }
+
   const asksAboutAccess =
     /\b(do you|can you|are you able to|have you)\b.*\b(access|see|read|know|use)\b.*\b(latest|current|live|page|pages|website|site|knowledge)\b/i.test(
       lastUser,
@@ -314,13 +385,13 @@ function quickResponseForMessage(
 
   if (!hasKnowledgeBase) {
     if (pageContext) {
-      return "I can see this page's URL, title, and visible text snapshot, but I do not see a published knowledge base for the wider site yet. Add or refresh knowledge when you want answers beyond the current page.";
+      return "Yes. I have context for this page, but I do not see a published knowledge base for the wider site yet. Add or refresh knowledge when you want answers beyond the current page.";
     }
     return "I do not see a published knowledge base for this widget yet. Add or refresh knowledge first, then I can answer from the indexed pages.";
   }
 
   if (pageContext) {
-    return "Yes. I can use this page's URL, title, and visible text snapshot, plus the site's indexed knowledge base. I do not live-browse new pages on every message, so refresh the knowledge base when the wider site changes.";
+    return "Yes. I have context for this page and can use it alongside the site's indexed knowledge.";
   }
 
   return "I can search the site's indexed knowledge base, including pages that have been scraped and published. I do not live-browse the website on every message, so if a page changed after the last knowledge refresh, refresh the knowledge base first.";
@@ -590,8 +661,10 @@ RULES:
 - Base your answers ONLY on the context provided below.
 - If the context does not contain enough information, say so honestly.
 - Do not fabricate facts, links, or information.
-- The user may refer to "this page", "current page", "here", or "the page I am on". For those references, use CURRENT EMBEDDED PAGE first, then use INDEXED KNOWLEDGE if it adds relevant support.
+- The user may refer to "this page", "current page", "this site", "this screen", "here", "where am I", or "the page I am on". For those references, use CURRENT EMBEDDED PAGE first, then use INDEXED KNOWLEDGE only if it adds relevant support.
 - CURRENT EMBEDDED PAGE is a bounded visible-text snapshot from the page hosting the widget. It is not a live browser session and may omit hidden or dynamically loaded details.
+- If CURRENT EMBEDDED PAGE is provided, do not say you cannot access or see the current page/screen. You can say you have page context, not pixel-level screenshot vision, when that distinction matters.
+- For screen/page-awareness questions, answer from CURRENT EMBEDDED PAGE and do not cite unrelated indexed pages.
 - If you rely on CURRENT EMBEDDED PAGE, cite it with ${currentPageCitation}.
 - For legal, immigration, visa, travel, safety, payment, eligibility, or deadline questions: only answer exact facts present in the context. Do not infer visa requirements from nationality or location.
 - If a user asks from a specific country or location, separate the answer into two ideas: first, say whether the context has country-specific requirements for that location; second, still provide the general documented competition, registration, attendance, timeline, and visa-support process from the context when those facts are available. Do not say the process is the same for all international participants unless the context explicitly states that.
