@@ -66,8 +66,13 @@ Guidelines:
 - Return 1 query if that's sufficient. Only return 2 if it genuinely adds coverage.
 - Do NOT generate near-duplicates. Each query must target a different angle (e.g. definition vs rules vs eligibility).
 - Prefer richer queries with key entities, synonyms, and constraints from the conversation.
+- Route by the user's target before writing queries. Preserve any explicit product, event, year, version, page type, or country/location in the user's wording.
 - If the user did NOT specify a timeframe, assume they want the latest info and include the current year (${new Date().getUTCFullYear()}) when it helps.
 - If the user DID specify a timeframe (e.g. "in 2023", "last season"), respect it and do not force "latest".
+- For "latest/current/upcoming" questions, make the query look for current official pages, not historical pages.
+- If "latest/current/upcoming" could refer to multiple current events, versions, or programs, generate one query for the official index/listing page and one query for the user's concrete task.
+- For participation, attendance, documentation, or step-by-step questions, split coverage between event/application requirements and practical logistics such as deadlines, FAQ, visa/travel support, and contact/support channels.
+- Do not invent website-specific event names or domains that are not present in the conversation, prior sources, or coverage hint.
 
 ${sourcesHint}
 
@@ -122,16 +127,27 @@ function lastUserContent(messages: ChatMessage[]) {
   return [...messages].reverse().find((m) => m.role === "user")?.content.trim() ?? "";
 }
 
-function expandSearchQueries(messages: ChatMessage[], plannedQueries: string[]) {
+function expandSearchQueries(
+  messages: ChatMessage[],
+  plannedQueries: string[],
+  site: Pick<Site, "title" | "allowedTopics">,
+) {
   const lastUser = lastUserContent(messages);
+  const siteHint = buildSiteSearchHint(site);
   const priorityQueries: string[] = [];
+  const scoped = (...terms: string[]) =>
+    [siteHint, lastUser, ...terms].filter(Boolean).join(" ");
 
   if (
     /\b(attend|participat(?:e|ing|ion)?|join|compete|competition|race)\b/i.test(lastUser) &&
     /\b(document(?:s|ation)?|requirements?|step\s*by\s*step|process|apply|application|latest)\b/i.test(lastUser)
   ) {
-    priorityQueries.push("ICRA 2026 RoboRacer registration requirements FAQ timeline visa information participation steps");
-    priorityQueries.push("ICRA 2026 RoboRacer registration form video demonstration hardware list ICRA registration visa letters");
+    priorityQueries.push(
+      scoped("latest current official registration application requirements eligibility timeline FAQ participation steps"),
+    );
+    priorityQueries.push(
+      scoped("visa travel support invitation letter attendee documents international participants contact organizers"),
+    );
   }
 
   const expanded = [lastUser, ...priorityQueries, ...plannedQueries].filter(Boolean);
@@ -164,16 +180,16 @@ function expandSearchQueries(messages: ChatMessage[], plannedQueries: string[]) 
   }
 
   if (/\b(passing|collisions?|track boundaries?|penalties)\b/i.test(lastUser)) {
-    expanded.push("ICRA 2026 RoboRacer rules passing collisions track boundaries penalties warnings");
+    expanded.push(scoped("competition rules passing collisions track boundaries penalties warnings"));
   }
 
   if (/\b(housing|hotel|accommodation|scam|booking)\b/i.test(lastUser)) {
-    expanded.push("ICRA 2026 housing information AIM Austria official booking hotel warning scam");
+    expanded.push(scoped("official housing hotel accommodation booking warning scam travel"));
   }
 
   if (/\b(visa|invitation letter|support letter|travel document|embassy|consulate)\b/i.test(lastUser)) {
-    expanded.push("ICRA 2026 visa information support invitation letter travel documents Austria attendees");
-    expanded.push("ICRA 2026 registration visa support international participants");
+    expanded.push(scoped("visa information support invitation letter travel documents embassy consulate attendees"));
+    expanded.push(scoped("registration visa support international participants official event"));
   }
 
   const seen = new Set<string>();
@@ -187,6 +203,15 @@ function expandSearchQueries(messages: ChatMessage[], plannedQueries: string[]) 
     if (unique.length >= RETRIEVAL_QUERY_LIMIT) break;
   }
   return unique;
+}
+
+function buildSiteSearchHint(site: Pick<Site, "title" | "allowedTopics">) {
+  return [site.title, ...site.allowedTopics]
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .slice(0, 180);
 }
 
 function dedupeChunks(chunks: RetrievedChunk[]): RetrievedChunk[] {
@@ -318,37 +343,6 @@ function shouldKeepChunkForQuery(chunk: RetrievedChunk, query: string) {
   return userExplicitlyAskedForRepoFile;
 }
 
-function shouldKeepEventChunkForQuery(chunk: RetrievedChunk, query: string) {
-  const q = query.toLowerCase();
-  if (!/\bicra\s*2026\b/.test(q)) return true;
-
-  const url = (chunk.url ?? "").toLowerCase();
-  const nonIcra2026EventSignals = [
-    "iv2026-race.roboracer.ai",
-    "2026ifac-roboracer.com",
-    "cdc2025-race.roboracer.ai",
-    "techfest.org/competitions/roboracer",
-    "cdc2024-race.f1tenth.org",
-    "bu2024-race.f1tenth.org",
-    "korea-race24f1tenth.org",
-    "iros2024-race.f1tenth.org",
-    "itsc2024-race.f1tenth.org",
-    "sm2024-race.f1tenth.org",
-    "iv2024-race.f1tenth.org",
-    "cpsweek2024-race.f1tenth.org",
-    "icra2024-race.f1tenth.org",
-    "icra2024-madgames.f1tenth.org",
-    "iros2023-race.f1tenth.org",
-    "iros2023-madgames.f1tenth.org",
-    "korea-race23.f1tenth.org",
-    "icra2023-race.f1tenth.org",
-    "cps2023-race.f1tenth.org",
-    "iv2023-race.f1tenth.org",
-  ];
-
-  return !nonIcra2026EventSignals.some((signal) => url.includes(signal));
-}
-
 function buildRerankQuery(messages: ChatMessage[], queries: string[]) {
   const lastUser = lastUserContent(messages);
   const parts = [lastUser, ...queries].filter((value): value is string => Boolean(value));
@@ -368,7 +362,8 @@ function highStakesGuardResponse(messages: ChatMessage[], chunks: RetrievedChunk
   }
 
   if (
-    /\b(travel(?:ing|ling)?|international|from india|from albania|from kosovo|from nigeria)\b/.test(questionLower) &&
+    (/\b(travel(?:ing|ling)?|international|visa|embassy|consulate)\b/.test(questionLower) ||
+      /\bfrom\s+[a-z][a-z .'’-]{1,40}\b/.test(questionLower)) &&
     /\b(register|registration|slack|email|organizers?)\b/.test(questionLower) &&
     chunks.length === 0
   ) {
@@ -456,7 +451,11 @@ RULES:
 - Do not fabricate facts, links, or information.
 - For legal, immigration, visa, travel, safety, payment, eligibility, or deadline questions: only answer exact facts present in the context. Do not infer visa requirements from nationality or location.
 - If a user asks from a specific country or location, separate the answer into two ideas: first, say whether the context has country-specific requirements for that location; second, still provide the general documented competition, registration, attendance, timeline, and visa-support process from the context when those facts are available. Do not say the process is the same for all international participants unless the context explicitly states that.
-- For participation or attendance process questions, synthesize a practical step-by-step from the context. Include documented items such as the official registration form, video demonstration, hardware list, ICRA/on-site registration notes, deadlines, visa-information page, invitation-letter/payment notes, Slack/email organizer channels, and race-day timeline when present.
+- When the context contains several events, years, product versions, or page families, identify the user's target from explicit words first, then latest/current/upcoming intent, then the most relevant official pages. Do not blend facts from a different event/year/version just because they are adjacent in search results.
+- Treat source URL/domain/path as authoritative for routing. If a title appears to conflict with the URL/domain/path, keep that source separate from other similarly titled pages.
+- If the user's target remains ambiguous after reading the context, say that multiple relevant sources were found, name the options briefly, and ask which one they mean. You may still give only the general steps that are clearly supported across the relevant sources.
+- For "latest/current/upcoming" questions, avoid historical pages when current pages are present. If several current pages exist and none is clearly the user's target, do not pick one silently.
+- For participation or attendance process questions, synthesize a practical step-by-step from the context. Include documented items such as official registration/application forms, required submissions, eligibility notes, fees/payment notes, deadlines, event or on-site registration notes, visa/travel-support pages, support/community channels, and event-day timeline when present.
 - For overall "documentation requirements" or "step-by-step process" questions, lead with competition participation and registration materials first. Put visa/travel support after the competition registration steps unless the user asks mainly about visas.
 - For legal permission questions such as public-road use, do not answer yes/no unless the context explicitly states that exact permission or prohibition. Do not infer legality from race rules, build docs, or the absence of a public-road page.
 - For urgent hardware safety questions involving smoke, fire, burning, sparking, batteries, or motors, do not diagnose the cause. Say the knowledge base is not enough and suggest stopping use and getting qualified help.
@@ -487,7 +486,7 @@ export async function* ragStream(
 
   // 1. Plan search queries
   const plannedQueries = await planQueries(messages, site.allowedTopics, site.modelId);
-  const queries = expandSearchQueries(messages, plannedQueries);
+  const queries = expandSearchQueries(messages, plannedQueries, site);
   yield {
     type: "debug",
     stage: "plan_queries",
@@ -582,12 +581,13 @@ export async function* ragStream(
   // model actually receives, so it must be good on its own.
   const candidates = fuseByRRF(
     dedupeChunks(allChunks).filter((chunk) =>
-      shouldKeepChunkForQuery(chunk, rerankQuery) &&
-      shouldKeepEventChunkForQuery(chunk, rerankQuery),
+      shouldKeepChunkForQuery(chunk, rerankQuery),
     ),
   ).slice(0, RERANK_CANDIDATE_LIMIT);
 
-  let chunks = prioritizeChunksForQuery(candidates, rerankQuery).slice(0, FINAL_CONTEXT_LIMIT);
+  let routed = routeChunksForQuery(prioritizeChunksForQuery(candidates, rerankQuery), rerankQuery);
+  let chunks = routed.chunks.slice(0, FINAL_CONTEXT_LIMIT);
+  let sourceRoutingDebug = routed.debug;
   let rerankDebug: Record<string, unknown> = {
     enabled: false,
     reason: candidates.length ? "not_run" : "no_candidates",
@@ -600,7 +600,9 @@ export async function* ragStream(
         chunks: candidates,
         topN: FINAL_CONTEXT_LIMIT,
       });
-      chunks = prioritizeChunksForQuery(reranked.chunks, rerankQuery);
+      routed = routeChunksForQuery(prioritizeChunksForQuery(reranked.chunks, rerankQuery), rerankQuery);
+      chunks = routed.chunks.slice(0, FINAL_CONTEXT_LIMIT);
+      sourceRoutingDebug = routed.debug;
       rerankDebug = {
         enabled: true,
         model: reranked.model,
@@ -637,6 +639,7 @@ export async function* ragStream(
       scoreThreshold: SCORE_THRESHOLD,
       retrievalErrorCount: retrievalErrors.length,
       rerank: rerankDebug,
+      sourceRouting: sourceRoutingDebug,
     },
   };
   yield {
@@ -798,47 +801,374 @@ function prioritizeChunksForQuery(chunks: RetrievedChunk[], query: string) {
   });
 }
 
+type SourceRoute = {
+  key: string;
+  label: string;
+  family: string;
+  year: number;
+};
+
+function routeChunksForQuery(chunks: RetrievedChunk[], query: string) {
+  const q = query.toLowerCase();
+  if (!shouldRouteBySourceFamily(q) || chunks.length < 3) {
+    return {
+      chunks,
+      debug: {
+        enabled: false,
+        reason: chunks.length < 3 ? "too_few_chunks" : "no_route_intent",
+      },
+    };
+  }
+
+  const groups = new Map<
+    string,
+    {
+      route: SourceRoute;
+      chunks: RetrievedChunk[];
+      score: number;
+    }
+  >();
+
+  for (const chunk of chunks) {
+    const route = sourceRoute(chunk);
+    if (!route) continue;
+    const existing =
+      groups.get(route.key) ??
+      {
+        route,
+        chunks: [],
+        score: routeScore(route, query),
+      };
+    existing.chunks.push(chunk);
+    existing.score += 25 + numericScore(chunk) * 10 + Math.max(0, chunkPriority(chunk, query)) / 10;
+    groups.set(route.key, existing);
+  }
+
+  const rankedGroups = Array.from(groups.values()).sort((a, b) => b.score - a.score);
+  const top = rankedGroups[0];
+  const second = rankedGroups[1];
+  if (!top || !second) {
+    return {
+      chunks,
+      debug: {
+        enabled: false,
+        reason: "single_or_no_source_family",
+        groups: rankedGroups.map(sourceGroupDebug),
+      },
+    };
+  }
+
+  const explicitFamily = new RegExp(`\\b${escapeRegex(top.route.family)}\\b`, "i").test(query);
+  const confident =
+    explicitFamily ||
+    top.chunks.length >= second.chunks.length + 2 ||
+    top.score >= second.score * 1.45;
+
+  if (!confident) {
+    return {
+      chunks,
+      debug: {
+        enabled: false,
+        reason: "ambiguous_source_family",
+        groups: rankedGroups.slice(0, 5).map(sourceGroupDebug),
+      },
+    };
+  }
+
+  const routedChunks = chunks.filter((chunk) => {
+    const route = sourceRoute(chunk);
+    return !route || route.key === top.route.key;
+  });
+
+  if (routedChunks.length < Math.min(2, chunks.length)) {
+    return {
+      chunks,
+      debug: {
+        enabled: false,
+        reason: "routed_context_too_small",
+        selected: sourceGroupDebug(top),
+        groups: rankedGroups.slice(0, 5).map(sourceGroupDebug),
+      },
+    };
+  }
+
+  return {
+    chunks: routedChunks,
+    debug: {
+      enabled: true,
+      selected: sourceGroupDebug(top),
+      removedChunkCount: chunks.length - routedChunks.length,
+      groups: rankedGroups.slice(0, 5).map(sourceGroupDebug),
+    },
+  };
+}
+
+function shouldRouteBySourceFamily(query: string) {
+  return /\b(latest|current|upcoming|next|newest|this year|attend|participat|join|compete|competition|race|event|registration|register|apply|application|documents?|documentation|requirements?|deadline|timeline|schedule|faq|visa|travel|invitation|support letter|rules?|housing|hotel|accommodation)\b/.test(
+    query,
+  );
+}
+
+function sourceGroupDebug(group: { route: SourceRoute; chunks: RetrievedChunk[]; score: number }) {
+  return {
+    key: group.route.key,
+    label: group.route.label,
+    chunkCount: group.chunks.length,
+    score: Math.round(group.score * 100) / 100,
+  };
+}
+
+function routeScore(route: SourceRoute, query: string) {
+  const q = query.toLowerCase();
+  const currentYear = new Date().getUTCFullYear();
+  const queryYears = Array.from(new Set(q.match(/\b20\d{2}\b/g) ?? [])).map(Number);
+  const asksForLatest = /\b(latest|current|upcoming|next|newest|this year)\b/.test(q);
+  let score = 0;
+
+  if (queryYears.includes(route.year)) score += 80;
+  if (asksForLatest && queryYears.length === 0 && route.year === currentYear) score += 35;
+  if (asksForLatest && queryYears.length === 0 && route.year < currentYear) score -= 35;
+  if (new RegExp(`\\b${escapeRegex(route.family)}\\b`, "i").test(query)) score += 90;
+
+  return score;
+}
+
+function sourceRoute(chunk: RetrievedChunk): SourceRoute | null {
+  const fromUrl = sourceRouteFromText(sourceRouteUrlText(chunk.url));
+  if (fromUrl) return fromUrl;
+  return sourceRouteFromText(`${chunk.title ?? ""} ${chunk.text.slice(0, 400)}`);
+}
+
+function sourceRouteUrlText(rawUrl: string | undefined) {
+  if (!rawUrl) return "";
+  try {
+    const url = new URL(rawUrl);
+    return `${url.hostname} ${url.pathname}`;
+  } catch {
+    return rawUrl;
+  }
+}
+
+function sourceRouteFromText(value: string): SourceRoute | null {
+  const tokens = value
+    .toLowerCase()
+    .replace(/([a-z])(\d)/g, "$1 $2")
+    .replace(/(\d)([a-z])/g, "$1 $2")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (!/^20\d{2}$/.test(token)) continue;
+    const year = Number(token);
+    const family = nearestRouteFamily(tokens, i);
+    if (!family) continue;
+    return {
+      key: `${family}:${year}`,
+      label: `${family.toUpperCase()} ${year}`,
+      family,
+      year,
+    };
+  }
+
+  return null;
+}
+
+function nearestRouteFamily(tokens: string[], yearIndex: number) {
+  const offsets = [-1, 1, -2, 2, -3, 3];
+  for (const offset of offsets) {
+    const token = tokens[yearIndex + offset];
+    if (isRouteFamilyToken(token)) return token;
+  }
+  return null;
+}
+
+function isRouteFamilyToken(token: string | undefined) {
+  if (!token || !/^[a-z][a-z0-9]{1,14}$/.test(token)) return false;
+  const stopwords = new Set([
+    "about",
+    "accommodation",
+    "ai",
+    "application",
+    "apply",
+    "attend",
+    "booking",
+    "com",
+    "competition",
+    "current",
+    "deadline",
+    "documents",
+    "edu",
+    "eligibility",
+    "en",
+    "event",
+    "faq",
+    "html",
+    "http",
+    "https",
+    "ieee",
+    "index",
+    "info",
+    "latest",
+    "net",
+    "official",
+    "org",
+    "participants",
+    "race",
+    "races",
+    "register",
+    "registration",
+    "requirements",
+    "rules",
+    "schedule",
+    "support",
+    "timeline",
+    "travel",
+    "visa",
+    "www",
+  ]);
+  return !stopwords.has(token);
+}
+
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function chunkPriority(chunk: RetrievedChunk, query: string) {
   const q = query.toLowerCase();
   const url = (chunk.url ?? "").toLowerCase();
   const title = (chunk.title ?? "").toLowerCase();
+  const text = chunk.text.toLowerCase().slice(0, 2_000);
   const hay = `${url} ${title}`;
-  const mentionsSpecificPastYear = /\b20(?:21|22|23|24|25)\b/.test(q);
+  const bodyHay = `${hay} ${text}`;
+  const currentYear = new Date().getUTCFullYear();
+  const queryYears = Array.from(new Set(q.match(/\b20\d{2}\b/g) ?? []));
+  const asksForLatest = /\b(latest|current|upcoming|next|newest|this year)\b/.test(q);
+  const targetYears = queryYears.length > 0 ? queryYears : asksForLatest ? [String(currentYear)] : [];
   let score = 0;
 
-  if (/\b(icra\s*2026|latest|current|upcoming|visa|registration|timeline|event day|housing|hotel)\b/.test(q)) {
-    if (url.includes("icra2026-race.roboracer.ai")) score += 45;
-    if (url.includes("2026.ieee-icra.org")) score += 40;
-    if (!mentionsSpecificPastYear && /\b20(?:21|22|23|24|25)\b/.test(hay)) score -= 25;
+  for (const year of targetYears) {
+    if (hay.includes(year)) score += 50;
+    else if (bodyHay.includes(year)) score += 15;
   }
 
-  if (/\b(competition rules?|passing|collisions?|track boundaries?|penalties)\b/.test(q)) {
-    if (url.includes("icra2026-race.roboracer.ai/rules")) score += 80;
-    if (url.includes("icra2026-race.roboracer.ai/competition_rules")) score += 65;
-    if (url.includes("roboracer.ai/rules.md")) score += 45;
-    if (!mentionsSpecificPastYear && /(?:race\.f1tenth\.org|f1tenth\.org\/rules)/.test(url)) score -= 25;
+  if (asksForLatest && queryYears.length === 0) {
+    for (const year of hay.match(/\b20\d{2}\b/g) ?? []) {
+      if (Number(year) < currentYear) score -= 20;
+    }
+  }
+
+  score += keywordOverlapScore(q, hay, 3, 30);
+
+  if (/\b(attend|participat|join|compete|competition|race|event|registration|register|apply|application|documents?|documentation|requirements?|deadline|timeline|schedule|faq)\b/.test(q)) {
+    score += facetScore(hay, [
+      "registration",
+      "register",
+      "apply",
+      "application",
+      "requirements",
+      "eligibility",
+      "timeline",
+      "schedule",
+      "deadline",
+      "faq",
+      "attend",
+      "event",
+    ], 14);
+  }
+
+  if (/\b(competition rules?|rules?|passing|collisions?|track boundaries?|penalties|warnings?)\b/.test(q)) {
+    score += facetScore(hay, [
+      "rules",
+      "competition_rules",
+      "competition-rules",
+      "passing",
+      "collision",
+      "boundary",
+      "penalty",
+      "warning",
+    ], 18);
   }
 
   if (/\b(course\s*kit|first lab|1st lab|lab\s*(?:one|1)|start here|getting started)\b/.test(q)) {
-    if (url.includes("f1tenth-coursekit.readthedocs.io")) score += 35;
-    if (url.includes("/getting_started/index")) score += 85;
-    if (url.includes("/assignments/labs/lab1")) score += 85;
-    if (url.includes("/assignments/labs/index")) score += 65;
-    if (url.includes("/lectures/modulea/")) score += 25;
-    if (url.includes("/introduction/syllabus")) score -= 20;
+    score += facetScore(hay, [
+      "course",
+      "coursekit",
+      "getting_started",
+      "getting-started",
+      "start",
+      "lab1",
+      "lab-1",
+      "labs",
+      "assignment",
+      "module",
+    ], 16);
   }
 
   if (/\b(housing|hotel|accommodation|scam|booking)\b/.test(q)) {
-    if (url.includes("2026.ieee-icra.org/attend/housing-information")) score += 90;
+    score += facetScore(hay, [
+      "housing",
+      "hotel",
+      "accommodation",
+      "booking",
+      "travel",
+      "attend",
+      "scam",
+    ], 18);
   }
 
   if (/\b(visa|invitation letter|support letter|travel document|embassy|consulate)\b/.test(q)) {
-    if (url.includes("2026.ieee-icra.org/attend/visa-information")) score += 110;
-    if (url.includes("2026.ieee-icra.org/attend/visa-support")) score += 100;
-    if (url.includes("2026.ieee-icra.org/attend/registration")) score += 35;
+    score += facetScore(hay, [
+      "visa",
+      "invitation",
+      "support",
+      "travel",
+      "attend",
+      "registration",
+      "embassy",
+      "consulate",
+    ], 20);
   }
 
   return score;
+}
+
+function facetScore(haystack: string, terms: string[], weight: number) {
+  return terms.reduce((total, term) => (haystack.includes(term) ? total + weight : total), 0);
+}
+
+function keywordOverlapScore(query: string, haystack: string, weight: number, cap: number) {
+  const stopwords = new Set([
+    "about",
+    "after",
+    "again",
+    "could",
+    "from",
+    "have",
+    "help",
+    "into",
+    "like",
+    "need",
+    "overall",
+    "please",
+    "should",
+    "that",
+    "their",
+    "there",
+    "this",
+    "want",
+    "what",
+    "when",
+    "where",
+    "with",
+    "would",
+  ]);
+  const tokens = Array.from(new Set(query.match(/\b[a-z0-9][a-z0-9_-]{3,}\b/g) ?? []))
+    .filter((token) => !stopwords.has(token));
+  const score = tokens.reduce((total, token) => (haystack.includes(token) ? total + weight : total), 0);
+  return Math.min(score, cap);
 }
 
 function numericScore(chunk: RetrievedChunk) {
@@ -893,10 +1223,6 @@ function normalizeDisplayTitle(title: string, url?: string) {
     .replace(/\s+\(\d+\/\d+\)$/g, "")
     .replace(/\s+/g, " ")
     .trim();
-
-  if (url?.includes("2026.ieee-icra.org")) {
-    out = out.replace(/\bIEEE ICRA 2025\b/g, "IEEE ICRA 2026");
-  }
 
   return out.replace(/\bRoboracer\b/g, "RoboRacer");
 }
