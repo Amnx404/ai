@@ -433,7 +433,10 @@ export default async function WidgetDemoPage({
               )}, preview: true };`,
             }}
           />
-          <Script src={`${env.NEXTAUTH_URL}/widget.js`} strategy="afterInteractive" />
+          <Script
+            src={`${env.NEXTAUTH_URL}/widget.js?v=restore-launcher`}
+            strategy="afterInteractive"
+          />
         </>
       ) : null}
     </div>

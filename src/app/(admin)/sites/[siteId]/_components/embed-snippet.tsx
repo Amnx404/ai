@@ -77,7 +77,7 @@ export function EmbedSnippet({
     ? `<script>
   window.ChatWidget = { siteId: "${siteId}" };
 </script>
-<script async src="${origin}/widget.js"></script>`
+<script async src="${origin}/widget.js?v=restore-launcher"></script>`
     : "Loading install code...";
 
   const primaryHost = hostFromUrl(primaryUrl);
