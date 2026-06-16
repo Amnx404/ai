@@ -32,6 +32,14 @@ export interface Source {
   score: number;
 }
 
+export interface PageContext {
+  url: string;
+  title?: string;
+  description?: string;
+  headings?: string[];
+  text?: string;
+}
+
 function buildQueryPlannerPrompt(
   messages: ChatMessage[],
   allowedTopics: string[]
@@ -147,13 +155,19 @@ function expandSearchQueries(
   messages: ChatMessage[],
   plannedQueries: string[],
   site: Pick<Site, "title" | "allowedTopics">,
+  pageContext?: PageContext | null,
 ) {
   const lastUser = lastUserContent(messages);
   const siteHint = buildSiteSearchHint(site);
   const currentYearHint = currentYearQueryHint(lastUser);
+  const pageHint = currentPageQueryHint(lastUser, pageContext);
   const priorityQueries: string[] = [];
   const scoped = (...terms: string[]) =>
-    [siteHint, lastUser, currentYearHint, ...terms].filter(Boolean).join(" ");
+    [siteHint, pageHint, lastUser, currentYearHint, ...terms].filter(Boolean).join(" ");
+
+  if (pageHint) {
+    priorityQueries.push([lastUser, pageHint].filter(Boolean).join(" "));
+  }
 
   if (
     /\b(attend|participat(?:e|ing|ion)?|join|compete|competition|race)\b/i.test(lastUser) &&
@@ -243,9 +257,41 @@ function currentYearQueryHint(query: string) {
   return `current latest ${new Date().getUTCFullYear()}`;
 }
 
+function hasCurrentPageIntent(query: string) {
+  return /\b(this|current|same|here|above|the page|this page|current page|page i'?m on|page i am on|page we are on|where am i|what page)\b/i.test(
+    query,
+  );
+}
+
+function currentPageQueryHint(query: string, pageContext?: PageContext | null) {
+  if (!pageContext || !hasCurrentPageIntent(query)) return "";
+  const urlHint = pageContext.url
+    ? (() => {
+        try {
+          const url = new URL(pageContext.url);
+          return `${url.hostname} ${url.pathname.replace(/[-_/]+/g, " ")}`;
+        } catch {
+          return pageContext.url;
+        }
+      })()
+    : "";
+  return [
+    "current embedded page",
+    pageContext.title,
+    pageContext.description,
+    ...(pageContext.headings ?? []).slice(0, 8),
+    urlHint,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .slice(0, 700);
+}
+
 function quickResponseForMessage(
   messages: ChatMessage[],
   hasKnowledgeBase: boolean,
+  pageContext?: PageContext | null,
 ) {
   const lastUser = lastUserContent(messages);
   const normalized = lastUser
@@ -267,7 +313,14 @@ function quickResponseForMessage(
   if (!asksAboutAccess) return null;
 
   if (!hasKnowledgeBase) {
+    if (pageContext) {
+      return "I can see this page's URL, title, and visible text snapshot, but I do not see a published knowledge base for the wider site yet. Add or refresh knowledge when you want answers beyond the current page.";
+    }
     return "I do not see a published knowledge base for this widget yet. Add or refresh knowledge first, then I can answer from the indexed pages.";
+  }
+
+  if (pageContext) {
+    return "Yes. I can use this page's URL, title, and visible text snapshot, plus the site's indexed knowledge base. I do not live-browse new pages on every message, so refresh the knowledge base when the wider site changes.";
   }
 
   return "I can search the site's indexed knowledge base, including pages that have been scraped and published. I do not live-browse the website on every message, so if a page changed after the last knowledge refresh, refresh the knowledge base first.";
@@ -408,13 +461,23 @@ function buildRerankQuery(messages: ChatMessage[], queries: string[]) {
   return Array.from(new Set(parts)).join("\n");
 }
 
-function highStakesGuardResponse(messages: ChatMessage[], chunks: RetrievedChunk[]) {
+function highStakesGuardResponse(
+  messages: ChatMessage[],
+  chunks: RetrievedChunk[],
+  pageContext?: PageContext | null,
+) {
   const question = lastUserContent(messages);
   const questionLower = question.toLowerCase();
   const context = chunks
     .map((chunk) => `${chunk.title ?? ""}\n${chunk.url ?? ""}\n${chunk.text}`)
     .join("\n")
+    .concat(
+      pageContext
+        ? `\n${pageContext.title ?? ""}\n${pageContext.url}\n${pageContext.description ?? ""}\n${(pageContext.headings ?? []).join("\n")}\n${pageContext.text ?? ""}`
+        : "",
+    )
     .toLowerCase();
+  const hasContext = chunks.length > 0 || Boolean(pageContext?.text || pageContext?.description || pageContext?.title);
 
   if (questionLower.includes("get-pip.py")) {
     return "get-pip.py can show up when the knowledge base includes GitHub repository listings or source-file pages. It is usually not relevant end-user content, and visitors generally do not need to care about it unless they are maintaining the documentation tooling.";
@@ -424,7 +487,7 @@ function highStakesGuardResponse(messages: ChatMessage[], chunks: RetrievedChunk
     (/\b(travel(?:ing|ling)?|international|visa|embassy|consulate)\b/.test(questionLower) ||
       /\bfrom\s+[a-z][a-z .'’-]{1,40}\b/.test(questionLower)) &&
     /\b(register|registration|slack|email|organizers?)\b/.test(questionLower) &&
-    chunks.length === 0
+    !hasContext
   ) {
     return "The knowledge base does not include country-specific travel or visa requirements. Start with the official registration or event page, use the listed community/support channels for updates, and contact the organizers for event-specific travel, visa, or participation questions.";
   }
@@ -469,7 +532,8 @@ function isDomainGuardPassed(
 
 function buildSystemPrompt(
   site: Pick<Site, "title" | "greeting" | "allowedTopics">,
-  contextChunks: RetrievedChunk[]
+  contextChunks: RetrievedChunk[],
+  pageContext?: PageContext | null,
 ): string {
   const stripMarkdown = (s: string) =>
     s
@@ -495,6 +559,24 @@ function buildSystemPrompt(
           .join("\n\n")
       : "No relevant context found.";
 
+  const currentPageBlock = pageContext
+    ? [
+        pageContext.title ? `Title: ${stripMarkdown(pageContext.title)}` : "",
+        `URL: ${pageContext.url}`,
+        pageContext.description ? `Description: ${stripMarkdown(pageContext.description)}` : "",
+        pageContext.headings?.length
+          ? `Headings: ${pageContext.headings.map(stripMarkdown).join(" | ")}`
+          : "",
+        pageContext.text ? `Visible text snapshot: ${stripMarkdown(pageContext.text)}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    : "No current page snapshot was provided.";
+
+  const currentPageCitation = pageContext
+    ? `[[${currentPageSourceTitle(pageContext)}|${pageContext.url}]]`
+    : "[[Current page|https://example.com]]";
+
   const scopeInstruction =
     site.allowedTopics.length > 0
       ? `You ONLY answer questions about: ${site.allowedTopics.join(", ")}. For questions outside that coverage, politely explain what you can help with, and try to think about the question from the user's perspective and the website's content.`
@@ -508,6 +590,9 @@ RULES:
 - Base your answers ONLY on the context provided below.
 - If the context does not contain enough information, say so honestly.
 - Do not fabricate facts, links, or information.
+- The user may refer to "this page", "current page", "here", or "the page I am on". For those references, use CURRENT EMBEDDED PAGE first, then use INDEXED KNOWLEDGE if it adds relevant support.
+- CURRENT EMBEDDED PAGE is a bounded visible-text snapshot from the page hosting the widget. It is not a live browser session and may omit hidden or dynamically loaded details.
+- If you rely on CURRENT EMBEDDED PAGE, cite it with ${currentPageCitation}.
 - For legal, immigration, visa, travel, safety, payment, eligibility, or deadline questions: only answer exact facts present in the context. Do not infer visa requirements from nationality or location.
 - If a user asks from a specific country or location, separate the answer into two ideas: first, say whether the context has country-specific requirements for that location; second, still provide the general documented competition, registration, attendance, timeline, and visa-support process from the context when those facts are available. Do not say the process is the same for all international participants unless the context explicitly states that.
 - When the context contains several events, years, product versions, or page families, identify the user's target from explicit words first, then latest/current/upcoming intent, then the most relevant official pages. Do not blend facts from a different event/year/version just because they are adjacent in search results.
@@ -529,12 +614,17 @@ RULES:
 - You can always use the website's content to answer the question and can also touch around to be helpful if the exact answer is not apparant.
 
 CONTEXT:
+CURRENT EMBEDDED PAGE:
+${currentPageBlock}
+
+INDEXED KNOWLEDGE:
 ${contextBlock}`;
 }
 
 export async function* ragStream(
   site: Site,
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  pageContext?: PageContext | null,
 ): AsyncGenerator<
   | { type: "token"; content: string }
   | { type: "sources"; sources: Source[] }
@@ -543,7 +633,7 @@ export async function* ragStream(
   | { type: "error"; message: string }
 > {
   const liveNamespace = site.livePineconeNs?.trim() ?? "";
-  const quickResponse = quickResponseForMessage(messages, Boolean(liveNamespace));
+  const quickResponse = quickResponseForMessage(messages, Boolean(liveNamespace), pageContext);
   if (quickResponse) {
     yield {
       type: "debug",
@@ -556,7 +646,7 @@ export async function* ragStream(
 
   // 1. Plan search queries
   const plannedQueries = await planQueries(messages, site.allowedTopics, site.modelId);
-  const queries = expandSearchQueries(messages, plannedQueries, site);
+  const queries = expandSearchQueries(messages, plannedQueries, site, pageContext);
   yield {
     type: "debug",
     stage: "plan_queries",
@@ -780,14 +870,14 @@ export async function* ragStream(
     };
   }
 
-  const guardedResponse = highStakesGuardResponse(messages, chunks);
+  const guardedResponse = highStakesGuardResponse(messages, chunks, pageContext);
   if (guardedResponse) {
     yield { type: "token", content: guardedResponse };
     return;
   }
 
   // 5. Build prompt
-  const systemPrompt = buildSystemPrompt(site, chunks);
+  const systemPrompt = buildSystemPrompt(site, chunks, pageContext);
   yield {
     type: "debug",
     stage: "system_prompt",
@@ -864,6 +954,14 @@ export async function* ragStream(
   // 7. Emit sources
   const sourceKeys = new Set<string>();
   const sources: Source[] = [];
+  if (pageContext) {
+    sources.push({
+      title: currentPageSourceTitle(pageContext),
+      url: pageContext.url,
+      score: 1,
+    });
+    sourceKeys.add(normalizeSourceKey(pageContext.url));
+  }
   for (const chunk of chunks) {
     if (!chunk.url && !chunk.title) continue;
     const key = normalizeSourceKey(chunk.url || chunk.title || chunk.id);
@@ -1306,6 +1404,19 @@ function countWords(value: string) {
 
 function displayTitle(chunk: RetrievedChunk) {
   return normalizeDisplayTitle(chunk.title ?? chunk.url ?? "Source", chunk.url);
+}
+
+function currentPageSourceTitle(pageContext: PageContext) {
+  const base =
+    pageContext.title?.trim() ||
+    (() => {
+      try {
+        return new URL(pageContext.url).hostname.replace(/^www\./, "");
+      } catch {
+        return "Current page";
+      }
+    })();
+  return normalizeDisplayTitle(`Current page: ${base}`, pageContext.url);
 }
 
 function normalizeDisplayTitle(title: string, url?: string) {

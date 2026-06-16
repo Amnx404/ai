@@ -7,7 +7,15 @@ import { env } from "~/env.js";
 import { verifyWidgetToken } from "~/lib/widget-jwt";
 import { getRealIp, rateLimit } from "~/lib/rate-limit";
 import { getLangfuse, getLangfuseTraceUrl } from "~/lib/langfuse";
-import { checkOriginAllowed } from "~/lib/allowed-domains";
+import { checkOriginAllowed, originMatchesAllowedDomains } from "~/lib/allowed-domains";
+
+const pageContextSchema = z.object({
+  url: z.string().url().max(2048),
+  title: z.string().max(300).optional(),
+  description: z.string().max(1000).optional(),
+  headings: z.array(z.string().max(220)).max(20).optional(),
+  text: z.string().max(12_000).optional(),
+});
 
 const bodySchema = z.object({
   siteId: z.string().min(1),
@@ -29,6 +37,7 @@ const bodySchema = z.object({
     )
     .min(1)
     .max(20),
+  pageContext: pageContextSchema.nullish(),
   sessionId: z.string().optional(),
   token: z.string().optional(),
   stream: z.boolean().default(true),
@@ -80,6 +89,11 @@ export async function POST(req: NextRequest) {
   if (!originGate.ok) {
     return sseError(originGate.error, originGate.status, req);
   }
+  const pageContext = sanitizePageContext(parsed.data.pageContext, {
+    origin,
+    allowedDomains: site.allowedDomains,
+    primaryUrl: site.primaryUrl,
+  });
 
   const langfuse = getLangfuse();
   // One trace per browser session (sessionId is created by /api/v1/session and stored in sessionStorage).
@@ -96,6 +110,13 @@ export async function POST(req: NextRequest) {
       modelId: site.modelId,
       temperature: site.temperature,
       allowedTopics: site.allowedTopics,
+      currentPage: pageContext
+        ? {
+            url: pageContext.url,
+            title: pageContext.title ?? null,
+            textLength: pageContext.text?.length ?? 0,
+          }
+        : null,
     },
   });
   if (trace) {
@@ -132,15 +153,15 @@ export async function POST(req: NextRequest) {
       const span =
         trace?.span?.({
           name: "chat_turn",
-          input: { messages },
-          metadata: { siteId, origin },
+          input: { messages, pageContext },
+          metadata: { siteId, origin, currentPageUrl: pageContext?.url ?? null },
         }) ?? null;
 
       const generation =
         span?.generation?.({
           name: "assistant_response",
           model: site.modelId,
-          input: { messages },
+          input: { messages, pageContext },
           metadata: {
             temperature: site.temperature,
           },
@@ -148,7 +169,7 @@ export async function POST(req: NextRequest) {
         trace?.generation?.({
           name: "assistant_response",
           model: site.modelId,
-          input: { messages },
+          input: { messages, pageContext },
           metadata: {
             temperature: site.temperature,
           },
@@ -182,7 +203,7 @@ export async function POST(req: NextRequest) {
       };
 
       try {
-        for await (const event of ragStream(site, messages)) {
+        for await (const event of ragStream(site, messages, pageContext)) {
           if (event.type === "token") {
             if (firstTokenAtMs === null) firstTokenAtMs = Date.now();
             const content = sanitizeAssistantToken(event.content);
@@ -282,7 +303,7 @@ export async function POST(req: NextRequest) {
         // Best-effort token estimates (we don't currently get usage from streamed OpenRouter responses).
         const estInputTokens = Math.max(
           0,
-          Math.round(JSON.stringify(messages).length / 4)
+          Math.round(JSON.stringify({ messages, pageContext }).length / 4)
         );
         const estOutputTokens = Math.max(0, Math.round(fullResponse.length / 4));
         const tokensPerSecond =
@@ -433,6 +454,61 @@ function sseError(message: string, status: number, req: NextRequest) {
 
 function sanitizeAssistantToken(content: string) {
   return content.replace(/[*`]/g, "");
+}
+
+type RawPageContext = z.infer<typeof pageContextSchema>;
+
+function sanitizePageContext(
+  context: RawPageContext | null | undefined,
+  site: { origin: string; allowedDomains: string[]; primaryUrl?: string | null },
+) {
+  if (!context) return null;
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(context.url);
+  } catch {
+    return null;
+  }
+
+  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+    return null;
+  }
+
+  const allowedForContext = [
+    site.origin,
+    site.primaryUrl ?? "",
+    ...site.allowedDomains,
+  ].filter(Boolean);
+  if (
+    allowedForContext.length > 0 &&
+    !originMatchesAllowedDomains(parsedUrl.origin, allowedForContext)
+  ) {
+    return null;
+  }
+
+  const clean = (value: string | undefined, limit: number) => {
+    const compact = value?.replace(/\s+/g, " ").trim() ?? "";
+    return compact ? compact.slice(0, limit) : undefined;
+  };
+
+  const title = clean(context.title, 300);
+  const description = clean(context.description, 1_000);
+  const text = clean(context.text, 12_000);
+  const headings = (context.headings ?? [])
+    .map((heading) => clean(heading, 220))
+    .filter((heading): heading is string => Boolean(heading))
+    .slice(0, 20);
+
+  if (!title && !description && !text && headings.length === 0) return null;
+
+  return {
+    url: parsedUrl.href,
+    ...(title ? { title } : {}),
+    ...(description ? { description } : {}),
+    ...(headings.length ? { headings } : {}),
+    ...(text ? { text } : {}),
+  };
 }
 
 function titleNeedleCandidates(title: string) {

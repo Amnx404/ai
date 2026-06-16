@@ -25,9 +25,18 @@ interface Message {
   ts: number;
 }
 
+interface PageContext {
+  url: string;
+  title?: string;
+  description?: string;
+  headings?: string[];
+  text?: string;
+}
+
 interface ChatWidgetGlobal {
   siteId: string;
   apiBase?: string;
+  pageUrl?: string;
   pageIconUrl?: string;
   preview?: boolean;
 }
@@ -127,6 +136,58 @@ function cleanPromptTopic(topic: string): string {
 
 function escapeRegExp(str: string) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function cleanPageText(value: string, limit = 8_000) {
+  return value.replace(/\s+/g, " ").trim().slice(0, limit);
+}
+
+function metaContent(selector: string) {
+  return document.querySelector<HTMLMetaElement>(selector)?.content?.trim() ?? "";
+}
+
+function currentPageUrl() {
+  const configured = window.ChatWidget?.pageUrl?.trim();
+  if (configured) {
+    try {
+      return new URL(configured, window.location.href).href;
+    } catch {
+      // fall back to the browser URL below
+    }
+  }
+  return window.location.href;
+}
+
+function isSkippableTextNode(node: Node) {
+  const el = node.parentElement;
+  if (!el) return true;
+  if (el.closest("#rr-chat-widget")) return true;
+  if (el.closest("script, style, noscript, svg, canvas, input, textarea, select, button")) return true;
+
+  const style = window.getComputedStyle(el);
+  return style.display === "none" || style.visibility === "hidden";
+}
+
+function visiblePageText(root: Element) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (isSkippableTextNode(node)) return NodeFilter.FILTER_REJECT;
+      return node.textContent?.trim()
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_REJECT;
+    },
+  });
+
+  const parts: string[] = [];
+  let total = 0;
+  while (walker.nextNode()) {
+    const text = cleanPageText(walker.currentNode.textContent ?? "", 700);
+    if (!text) continue;
+    parts.push(text);
+    total += text.length;
+    if (total >= 8_000) break;
+  }
+  return cleanPageText(parts.join(" "));
 }
 
 function linkSourcesInText(
@@ -696,6 +757,35 @@ export class ChatWidget {
     }
   }
 
+  private collectPageContext(): PageContext | null {
+    const url = currentPageUrl();
+    const title = cleanPageText(document.title, 240);
+    const description = cleanPageText(
+      metaContent('meta[name="description"]') ||
+        metaContent('meta[property="og:description"]'),
+      700
+    );
+    const headings = Array.from(document.querySelectorAll<HTMLElement>("h1, h2, h3"))
+      .filter((el) => !el.closest("#rr-chat-widget"))
+      .map((el) => cleanPageText(el.innerText || el.textContent || "", 180))
+      .filter(Boolean)
+      .slice(0, 16);
+    const root =
+      document.querySelector("main") ??
+      document.querySelector("article") ??
+      document.body;
+    const text = root ? visiblePageText(root) : "";
+
+    if (!url && !title && !description && !headings.length && !text) return null;
+    return {
+      url,
+      ...(title ? { title } : {}),
+      ...(description ? { description } : {}),
+      ...(headings.length ? { headings } : {}),
+      ...(text ? { text } : {}),
+    };
+  }
+
   private async sendMessage() {
     if (this.isStreaming) return;
     if (this.isPreviewOnly()) return;
@@ -746,6 +836,7 @@ export class ChatWidget {
             content,
             ...(sources?.length ? { sources } : {}),
           })),
+          pageContext: this.collectPageContext(),
           sessionId: this.sessionId,
           token: this.token,
           stream: true,
