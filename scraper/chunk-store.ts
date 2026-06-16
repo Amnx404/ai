@@ -31,6 +31,9 @@ type KnowledgeChunkInsertRow = {
   metadata: Prisma.InputJsonObject;
 };
 
+const DEFAULT_CHUNK_STORE_TRANSACTION_TIMEOUT_MS = 60_000;
+const DEFAULT_CHUNK_STORE_TRANSACTION_MAX_WAIT_MS = 10_000;
+
 export async function storeKnowledgeChunks({
   siteId,
   namespace,
@@ -53,64 +56,70 @@ export async function storeKnowledgeChunks({
 
   const db = new PrismaClient();
   try {
-    const stored = await db.$transaction(async (tx) => {
-      await tx.knowledgeChunk.deleteMany({
-        where: { siteId: normalizedSiteId, namespace },
-      });
-
-      let count = 0;
-      const batchSize = 100;
-      for (let i = 0; i < chunks.length; i += batchSize) {
-        const batch = chunks.slice(i, i + batchSize);
-        const data: KnowledgeChunkInsertRow[] = batch.map((chunk) => {
-          const text = sanitizeDbText(chunk.text);
-          return {
-            id: `kc_${randomUUID()}`,
-            siteId: normalizedSiteId,
-            namespace,
-            vectorId: sanitizeDbText(chunk.id),
-            runId: sanitizeDbText(runId),
-            url: sanitizeDbText(chunk.url ?? ""),
-            title: chunk.title == null ? null : sanitizeDbText(chunk.title),
-            description: chunk.description == null ? null : sanitizeDbText(chunk.description),
-            text,
-            source: "scraper",
-            pageIndex: chunk.page_index ?? null,
-            chunkIndex: chunk.chunk_index ?? null,
-            chars: chunk.chars ?? text.length,
-            metadata: {
-              run_id: runId,
-              source: "scraper",
-              page_index: chunk.page_index ?? null,
-              chunk_index: chunk.chunk_index ?? null,
-            },
-          };
+    const stored = await db.$transaction(
+      async (tx) => {
+        await tx.knowledgeChunk.deleteMany({
+          where: { siteId: normalizedSiteId, namespace },
         });
 
-        const inserted = await insertKnowledgeChunkRows(tx, data);
+        let count = 0;
+        const batchSize = 100;
+        for (let i = 0; i < chunks.length; i += batchSize) {
+          const batch = chunks.slice(i, i + batchSize);
+          const data: KnowledgeChunkInsertRow[] = batch.map((chunk) => {
+            const text = sanitizeDbText(chunk.text);
+            return {
+              id: `kc_${randomUUID()}`,
+              siteId: normalizedSiteId,
+              namespace,
+              vectorId: sanitizeDbText(chunk.id),
+              runId: sanitizeDbText(runId),
+              url: sanitizeDbText(chunk.url ?? ""),
+              title: chunk.title == null ? null : sanitizeDbText(chunk.title),
+              description: chunk.description == null ? null : sanitizeDbText(chunk.description),
+              text,
+              source: "scraper",
+              pageIndex: chunk.page_index ?? null,
+              chunkIndex: chunk.chunk_index ?? null,
+              chars: chunk.chars ?? text.length,
+              metadata: {
+                run_id: runId,
+                source: "scraper",
+                page_index: chunk.page_index ?? null,
+                chunk_index: chunk.chunk_index ?? null,
+              },
+            };
+          });
 
-        // Store embeddings via raw SQL — Prisma createMany can't write vector columns.
-        const withEmbeddings = batch.filter((c) => c.embedding?.length);
-        if (withEmbeddings.length) {
-          const vectorIds = withEmbeddings.map((c) => c.id);
-          const embedStrs = withEmbeddings.map((c) => JSON.stringify(c.embedding));
-          await tx.$executeRaw`
-            UPDATE "KnowledgeChunk" AS kc
-            SET "embedding" = updates.emb::vector
-            FROM (
-              SELECT unnest(${vectorIds}::text[]) AS vid,
-                     unnest(${embedStrs}::text[]) AS emb
-            ) AS updates
-            WHERE kc."vectorId"   = updates.vid
-              AND kc."siteId"     = ${normalizedSiteId}
-              AND kc."namespace"  = ${namespace}
-          `;
+          const inserted = await insertKnowledgeChunkRows(tx, data);
+
+          // Store embeddings via raw SQL — Prisma createMany can't write vector columns.
+          const withEmbeddings = batch.filter((c) => c.embedding?.length);
+          if (withEmbeddings.length) {
+            const vectorIds = withEmbeddings.map((c) => c.id);
+            const embedStrs = withEmbeddings.map((c) => JSON.stringify(c.embedding));
+            await tx.$executeRaw`
+              UPDATE "KnowledgeChunk" AS kc
+              SET "embedding" = updates.emb::vector
+              FROM (
+                SELECT unnest(${vectorIds}::text[]) AS vid,
+                       unnest(${embedStrs}::text[]) AS emb
+              ) AS updates
+              WHERE kc."vectorId"   = updates.vid
+                AND kc."siteId"     = ${normalizedSiteId}
+                AND kc."namespace"  = ${namespace}
+            `;
+          }
+
+          count += inserted;
         }
-
-        count += inserted;
-      }
-      return count;
-    });
+        return count;
+      },
+      {
+        maxWait: transactionMaxWaitMs(),
+        timeout: transactionTimeoutMs(),
+      },
+    );
 
     return { stored, skipped: false };
   } finally {
@@ -137,6 +146,30 @@ function sanitizeDbText(value: string) {
     output += value[i];
   }
   return output;
+}
+
+function transactionTimeoutMs() {
+  return clampEnvInteger(
+    process.env.KNOWLEDGE_CHUNK_TRANSACTION_TIMEOUT_MS,
+    DEFAULT_CHUNK_STORE_TRANSACTION_TIMEOUT_MS,
+    5_000,
+    300_000,
+  );
+}
+
+function transactionMaxWaitMs() {
+  return clampEnvInteger(
+    process.env.KNOWLEDGE_CHUNK_TRANSACTION_MAX_WAIT_MS,
+    DEFAULT_CHUNK_STORE_TRANSACTION_MAX_WAIT_MS,
+    2_000,
+    60_000,
+  );
+}
+
+function clampEnvInteger(value: string | undefined, fallback: number, min: number, max: number) {
+  const n = typeof value === "string" ? Number(value) : NaN;
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.trunc(n)));
 }
 
 async function insertKnowledgeChunkRows(tx: Prisma.TransactionClient, rows: KnowledgeChunkInsertRow[]) {
