@@ -31,6 +31,10 @@ export type ScrapeRequest = {
   cloudflare_job_retries?: number;
   cloudflare_per_seed_limit?: number | null;
   cloudflare_stall_timeout_ms?: number | null;
+  cloudflare_discovery_timeout_ms?: number | null;
+  cloudflare_discovery_delay_seconds?: number | null;
+  cloudflare_markdown_retries?: number | null;
+  cloudflare_markdown_retry_delay_ms?: number | null;
   cloudflare_crawl_purposes?: Array<"search" | "ai-input" | "ai-train">;
 };
 

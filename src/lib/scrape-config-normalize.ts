@@ -42,6 +42,18 @@ export function normalizeScrapeConfigObject(input: unknown): Record<string, unkn
     else delete out.cloudflare_stall_timeout_ms;
   }
 
+  for (const key of [
+    "cloudflare_discovery_timeout_ms",
+    "cloudflare_discovery_delay_seconds",
+    "cloudflare_markdown_retries",
+    "cloudflare_markdown_retry_delay_ms",
+  ]) {
+    if (!(key in out)) continue;
+    const n = toFiniteNumber(out[key]);
+    if (n !== null && n >= 0) out[key] = Math.trunc(n);
+    else delete out[key];
+  }
+
   if ("delay" in out) {
     const n = toFiniteNumber(out.delay);
     if (n !== null && n >= 0) out.delay = n;
