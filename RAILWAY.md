@@ -23,7 +23,7 @@ Config file path: `/railway.json`
 | `callback_URL` | Same as `NEXTAUTH_URL` |
 | `WIDGET_JWT_SECRET` | Random secret for widget session tokens |
 | `OPENROUTER_API_KEY` | LLM (Gemini Flash) + embeddings (bge-m3) |
-| `SCRAPER_PIPELINE_BASE_URL` | Internal URL of the scraper service (set after scraper deploys) |
+| `SCRAPER_PIPELINE_BASE_URL` | Internal URL of the scraper service, e.g. `http://${{scraper.RAILWAY_PRIVATE_DOMAIN}}:${{scraper.PORT}}` |
 
 **Optional variables:**
 
@@ -86,5 +86,5 @@ FIRECRAWL_API_KEY=...
 1. Create a **Neon** project and copy the pooled connection string.
 2. In Railway, create the **web** service from this repo (config: `/railway.json`). Set all required web variables.
 3. In Railway, create the **scraper** service from the same repo (config: `/railway.scraper.json`). Set all required scraper variables.
-4. Copy the scraper service's Railway URL into the web service's `SCRAPER_PIPELINE_BASE_URL`.
+4. Copy the scraper service's internal Railway URL into the web service's `SCRAPER_PIPELINE_BASE_URL`. The scraper service listens on IPv6 (`SCRAPER_HOST=::`) so the web service can reach Railway private networking.
 5. On first deploy, `prisma migrate deploy` runs automatically (pre-deploy command in `railway.json`).
