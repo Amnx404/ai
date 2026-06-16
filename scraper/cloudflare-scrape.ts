@@ -435,7 +435,7 @@ async function runStaticDiscoveryMarkdownScrape(opts: {
         client: opts.client,
         body: {
           ...markdownOptions,
-          html: page.html,
+          url: page.url,
         },
         request: opts.request,
         url: page.url,

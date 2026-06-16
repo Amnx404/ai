@@ -55,6 +55,8 @@ export async function discoverStaticPages(opts: {
   const known = new Map<string, number>();
   const visited = new Set<string>();
   const pages: StaticDiscoveryPage[] = [];
+  const maxKnownUrls = Math.max(opts.maxPages * 4, opts.maxPages + opts.seedUrls.length);
+  const assetTextCache = new Map<string, Promise<string | null>>();
 
   for (const seedUrl of opts.seedUrls) {
     const url = canonicalizeUrl(seedUrl);
@@ -74,7 +76,7 @@ export async function discoverStaticPages(opts: {
     },
   });
 
-  while (queue.length > 0 && pages.length < opts.maxPages) {
+  while (queue.length > 0 && fetchablePageCount(pages) < opts.maxPages) {
     const item = queue.shift();
     if (!item || visited.has(item.url)) continue;
     visited.add(item.url);
@@ -84,11 +86,29 @@ export async function discoverStaticPages(opts: {
         timeoutMs,
         userAgent: opts.userAgent,
       });
-      const rawLinks = extractDocumentLinks(fetched.html, item.url);
+      const pageUrl = canonicalizeUrl(fetched.url) ?? item.url;
+      if (!urlAllowed(pageUrl, opts)) {
+        throw new Error(`Redirected outside allowed URL scope: ${pageUrl}`);
+      }
+      if (pageUrl !== item.url) {
+        known.set(pageUrl, item.depth);
+        visited.add(pageUrl);
+      }
+
+      const rawLinks = extractDocumentLinks(fetched.html, pageUrl);
+      if (rawLinks.length <= 5) {
+        rawLinks.push(
+          ...(await extractSparsePageAssetLinks(fetched.html, pageUrl, {
+            timeoutMs,
+            userAgent: opts.userAgent,
+            cache: assetTextCache,
+          })),
+        );
+      }
       const links = filterLinks(rawLinks, opts);
 
       pages.push({
-        url: item.url,
+        url: pageUrl,
         depth: item.depth,
         html: fetched.html,
         title: extractTitle(fetched.html),
@@ -99,7 +119,7 @@ export async function discoverStaticPages(opts: {
 
       if (item.depth < opts.maxDepth) {
         for (const link of links) {
-          if (known.size >= opts.maxPages) break;
+          if (known.size >= maxKnownUrls) break;
           if (known.has(link) || visited.has(link)) continue;
           known.set(link, item.depth + 1);
           queue.push({ url: link, depth: item.depth + 1 });
@@ -108,15 +128,17 @@ export async function discoverStaticPages(opts: {
 
       await opts.onProgress?.({
         event: "discover_page",
-        message: `Discovered ${links.length} links on ${item.url}`,
+        message: `Discovered ${links.length} links on ${pageUrl}`,
         data: {
-          url: item.url,
+          url: pageUrl,
+          requested_url: item.url !== pageUrl ? item.url : undefined,
           depth: item.depth,
           status_code: fetched.statusCode,
           links: links.length,
           queued: queue.length,
           discovered: known.size,
           pages: pages.length,
+          fetchable_pages: fetchablePageCount(pages),
         },
       });
     } catch (error) {
@@ -141,11 +163,12 @@ export async function discoverStaticPages(opts: {
           queued: queue.length,
           discovered: known.size,
           pages: pages.length,
+          fetchable_pages: fetchablePageCount(pages),
         },
       });
     }
 
-    if (delayMs > 0 && queue.length > 0 && pages.length < opts.maxPages) {
+    if (delayMs > 0 && queue.length > 0 && fetchablePageCount(pages) < opts.maxPages) {
       await sleep(delayMs);
     }
   }
@@ -157,6 +180,7 @@ export async function discoverStaticPages(opts: {
     data: {
       discovered_url_count: known.size,
       fetched_page_count: pages.length,
+      fetchable_page_count: pages.length - failedUrlCount,
       failed_url_count: failedUrlCount,
       queued_url_count: queue.length,
     },
@@ -168,6 +192,150 @@ export async function discoverStaticPages(opts: {
     failedUrlCount,
     queuedUrlCount: queue.length,
   };
+}
+
+function fetchablePageCount(pages: StaticDiscoveryPage[]) {
+  return pages.filter((page) => page.html?.trim() && !page.error).length;
+}
+
+async function extractSparsePageAssetLinks(
+  html: string,
+  pageUrl: string,
+  opts: {
+    timeoutMs: number;
+    userAgent?: string;
+    cache: Map<string, Promise<string | null>>;
+  },
+) {
+  const links: string[] = [];
+  const pending = extractDiscoveryAssetUrls(html, pageUrl);
+  const seen = new Set<string>();
+
+  while (pending.length > 0 && seen.size < 20) {
+    const assetUrl = pending.shift();
+    if (!assetUrl || seen.has(assetUrl)) continue;
+    seen.add(assetUrl);
+
+    const text = await fetchDiscoveryAssetText(assetUrl, opts);
+    if (!text) continue;
+
+    links.push(...extractQuotedUrls(text, assetUrl));
+    for (const nestedAssetUrl of extractDiscoveryAssetUrlsFromText(text, assetUrl)) {
+      if (!seen.has(nestedAssetUrl)) pending.push(nestedAssetUrl);
+    }
+  }
+
+  return links;
+}
+
+function extractDiscoveryAssetUrls(html: string, pageUrl: string) {
+  const urls = new Set<string>();
+  const scriptRe = /<script\b[^>]*?\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`]+))/gi;
+  let match: RegExpExecArray | null;
+  while ((match = scriptRe.exec(html))) {
+    const src = (match[1] ?? match[2] ?? match[3] ?? "").trim();
+    const absolute = resolveDocumentUrl(src, pageUrl);
+    if (absolute && isDiscoveryAssetUrl(absolute, pageUrl)) urls.add(absolute);
+  }
+  return [...urls];
+}
+
+function extractDiscoveryAssetUrlsFromText(text: string, baseUrl: string) {
+  return extractQuotedUrls(text, baseUrl).filter((url) => isDiscoveryAssetUrl(url, baseUrl));
+}
+
+function extractQuotedUrls(text: string, baseUrl: string) {
+  const urls = new Set<string>();
+  const re = /["'`]((?:https?:\/\/|\/)[^"'`<>\s]+)["'`]/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text))) {
+    const raw = match[1]?.trim();
+    if (!raw || !looksLikeUsefulDiscoveredUrl(raw)) continue;
+    const absolute = resolveDocumentUrl(raw, baseUrl);
+    if (absolute) urls.add(absolute);
+  }
+  return [...urls];
+}
+
+function looksLikeUsefulDiscoveredUrl(raw: string) {
+  if (/^https?:\/\//i.test(raw)) return true;
+  if (!raw.startsWith("/")) return false;
+  if (raw.startsWith("//")) return false;
+  if (raw.length < 4) return false;
+
+  try {
+    const url = new URL(raw, "https://example.test");
+    const pathname = url.pathname;
+    if (/^\/(?:assets?|static|fonts?|icons?|images?|img|logos?|var|script|style|styles)(?:\/|$)/i.test(pathname)) {
+      return /\.(?:json)$/i.test(pathname);
+    }
+    if (/\.(?:css|js|mjs|map|svg|png|jpe?g|gif|webp|ico|woff2?|ttf|eot|mp4|mov|avi)$/i.test(pathname)) {
+      return false;
+    }
+    return /[a-z]/i.test(pathname);
+  } catch {
+    return false;
+  }
+}
+
+function isDiscoveryAssetUrl(assetUrl: string, pageUrl: string) {
+  try {
+    const asset = new URL(assetUrl);
+    const page = new URL(pageUrl);
+    return asset.origin === page.origin && /\.(?:js|mjs|json)$/i.test(asset.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function fetchDiscoveryAssetText(
+  assetUrl: string,
+  opts: {
+    timeoutMs: number;
+    userAgent?: string;
+    cache: Map<string, Promise<string | null>>;
+  },
+) {
+  const cached = opts.cache.get(assetUrl);
+  if (cached) return cached;
+
+  const promise = fetchDiscoveryAssetTextUncached(assetUrl, opts);
+  opts.cache.set(assetUrl, promise);
+  return promise;
+}
+
+async function fetchDiscoveryAssetTextUncached(
+  assetUrl: string,
+  opts: { timeoutMs: number; userAgent?: string },
+) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), opts.timeoutMs);
+
+  try {
+    const res = await fetch(assetUrl, {
+      signal: controller.signal,
+      headers: {
+        Accept: "text/javascript,application/javascript,application/json,text/plain;q=0.9,*/*;q=0.8",
+        "User-Agent": opts.userAgent?.trim() || "website-knowledge-scraper/1.0",
+      },
+      redirect: "follow",
+    });
+    if (!res.ok) return null;
+    const contentType = res.headers.get("content-type")?.toLowerCase() ?? "";
+    if (
+      contentType &&
+      !contentType.includes("javascript") &&
+      !contentType.includes("application/json") &&
+      !contentType.includes("text/plain")
+    ) {
+      return null;
+    }
+    return await res.text();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function urlAllowed(
@@ -232,6 +400,7 @@ async function fetchHtml(url: string, opts: { timeoutMs: number; userAgent?: str
       throw new Error(`Unsupported content type: ${contentType}`);
     }
     return {
+      url: res.url,
       html,
       statusCode: res.status,
       contentType,
