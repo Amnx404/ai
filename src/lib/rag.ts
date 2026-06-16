@@ -290,7 +290,7 @@ function currentPageQueryHint(query: string, pageContext?: PageContext | null) {
 
 function asksForCurrentPageOverview(query: string) {
   return (
-    /\b(do you|can you|are you able to|have you)\b.*\b(see|read|view|know|understand|access)\b.*\b(screen|page|site|website|here)\b/i.test(
+    /\b(do you|can you|are you able to|have you)\b.*\b(see|read|view|know|understand)\b.*\b(screen|here)\b/i.test(
       query,
     ) ||
     /\bwhat(?:'s|s| is)\b.*\b(on\s+)?\b(this|current)\b.*\b(screen|page|site|website)\b/i.test(
@@ -309,6 +309,7 @@ function currentPageOverviewResponse(pageContext: PageContext) {
   const headings = (pageContext.headings ?? [])
     .map((heading) => heading.trim())
     .filter((heading) => heading && heading.toLowerCase() !== label.toLowerCase())
+    .map((heading) => heading.replace(/[.!?]+$/g, ""))
     .slice(0, 3);
 
   const parts = [
