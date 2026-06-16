@@ -144,12 +144,17 @@ function linkSourcesInText(
 
   let text = plainText;
 
-  // 0a) Standard markdown link: [label](https://example.com/path)
+  // 0a) Custom link markup: [[label|https://example.com/path]]
+  // Use the last pipe as the separator so labels like "IEEE ICRA 2026 | Visa Information" still render.
   text = text.replace(
-    /\[([^\]]{1,120})\]\(((?:https?):\/\/[^\s<>"')]{1,2048})\)/g,
-    (_m, rawLabel: string, rawUrl: string) => {
-      const label = String(rawLabel).trim();
-      const url = String(rawUrl).trim();
+    /\[\[([\s\S]{1,500}?)\]\]+/g,
+    (match, rawInner: string) => {
+      const inner = String(rawInner).trim();
+      const pipeIndex = inner.lastIndexOf("|");
+      if (pipeIndex <= 0) return match;
+      const label = inner.slice(0, pipeIndex).trim().replace(/\s*\|\s*/g, " - ");
+      const urlMatch = inner.slice(pipeIndex + 1).trim().match(/https?:\/\/[^\s<>"')\]]+/i);
+      const url = urlMatch?.[0]?.trim() ?? "";
       if (!label || !url) return "";
       return addToken(
         `<a class="intext-source" href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`
@@ -157,9 +162,9 @@ function linkSourcesInText(
     }
   );
 
-  // 0b) Custom link markup: [[label|https://example.com/path]]
+  // 0b) Standard markdown link: [label](https://example.com/path)
   text = text.replace(
-    /\[\[([^\]|]{1,120})\|((?:https?):\/\/[^\s<>"']{1,2048})\]\]/g,
+    /\[([^\]]{1,120})\]\(((?:https?):\/\/[^\s<>"')]{1,2048})\)/g,
     (_m, rawLabel: string, rawUrl: string) => {
       const label = String(rawLabel).trim();
       const url = String(rawUrl).trim();

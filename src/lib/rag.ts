@@ -465,6 +465,7 @@ RULES:
 - Do NOT cite sources as numbers like [1] or (1).
 - When you rely on information from a source, mention the page title with its URL naturally in the sentence (e.g. "According to the rules page..."), as shown below.
 - URLs will be rendered as clickable links in the UI. To cite, use this exact format: [[link text|https://example.com/path]]. STRICTLY FOLLOW THIS FORMAT.
+- In citation link text, do not use the pipe character "|". Replace it with a colon or dash, for example [[IEEE ICRA 2026 - Visa Information|https://example.com/path]]. Do not wrap the URL in Markdown brackets.
 - Keep responses concise and helpful. End with a short, friendly follow-up question when appropriate.
 - You can always use the website's content to answer the question and can also touch around to be helpful if the exact answer is not apparant.
 
