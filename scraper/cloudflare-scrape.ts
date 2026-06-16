@@ -415,10 +415,22 @@ async function runStaticDiscoveryMarkdownScrape(opts: {
   const records: CloudflareCrawlRecord[] = [];
   const markdownFailures: Array<{ url: string; error: string }> = [];
   const markdownOptions = cloudflareMarkdownOptions(opts.request);
+  let consecutiveRateLimitFailures = 0;
+  let preferLocalFallback = false;
 
   for (const page of discovery.pages) {
     if (records.length >= opts.maxPages) break;
     if (!page.html?.trim()) continue;
+
+    if (preferLocalFallback && page.markdownSource !== "url") {
+      const fallback = await pushLocalFallbackRecord({
+        records,
+        page,
+        error: "Cloudflare markdown rate limit circuit breaker active",
+        emit: opts.emit,
+      });
+      if (fallback) continue;
+    }
 
     await opts.emit({
       event: "markdown_start",
@@ -427,6 +439,7 @@ async function runStaticDiscoveryMarkdownScrape(opts: {
         url: page.url,
         depth: page.depth,
         markdown_requests: records.length + markdownFailures.length + 1,
+        prefer_local_fallback: preferLocalFallback,
       },
     });
 
@@ -470,6 +483,14 @@ async function runStaticDiscoveryMarkdownScrape(opts: {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       markdownFailures.push({ url: page.url, error: message });
+      if (isCloudflareRateLimitErrorMessage(message)) {
+        consecutiveRateLimitFailures += 1;
+        if (consecutiveRateLimitFailures >= 2) {
+          preferLocalFallback = true;
+        }
+      } else {
+        consecutiveRateLimitFailures = 0;
+      }
       await opts.emit({
         event: "markdown_failed",
         message: `Cloudflare markdown conversion failed for ${page.url}`,
@@ -477,42 +498,17 @@ async function runStaticDiscoveryMarkdownScrape(opts: {
           url: page.url,
           depth: page.depth,
           error: message,
+          consecutive_rate_limit_failures: consecutiveRateLimitFailures,
+          prefer_local_fallback: preferLocalFallback,
         },
       });
 
-      const fallbackMarkdown = htmlToLocalMarkdown(page.html, {
-        title: page.title,
-        url: page.url,
+      await pushLocalFallbackRecord({
+        records,
+        page,
+        error: message,
+        emit: opts.emit,
       });
-      if (fallbackMarkdown) {
-        records.push({
-          url: page.url,
-          markdown: fallbackMarkdown,
-          metadata: {
-            url: page.url,
-            title: page.title ?? undefined,
-            status: page.statusCode ?? undefined,
-            depth: page.depth,
-            content_type: page.contentType ?? undefined,
-            links: page.links,
-            source: "static-discovery",
-            markdown_source: "local-html-fallback",
-            cloudflare_markdown_error: message,
-          },
-        });
-
-        await opts.emit({
-          event: "markdown_done",
-          message: `Converted ${records.length} pages with local HTML fallback`,
-          data: {
-            url: page.url,
-            depth: page.depth,
-            markdown_chars: fallbackMarkdown.length,
-            converted_pages: records.length,
-            fallback: "local-html",
-          },
-        });
-      }
     }
 
     if (opts.seedDelayMs > 0 && records.length < opts.maxPages) {
@@ -657,6 +653,59 @@ async function extractMarkdownWithRetry(opts: {
   throw lastError instanceof Error ? lastError : new Error(String(lastError ?? "Cloudflare markdown failed"));
 }
 
+async function pushLocalFallbackRecord(opts: {
+  records: CloudflareCrawlRecord[];
+  page: {
+    url: string;
+    depth: number;
+    html: string | null;
+    title: string | null;
+    statusCode: number | null;
+    contentType: string | null;
+    links: string[];
+  };
+  error: string;
+  emit: (event: Omit<FirecrawlProgressEvent, "run_id">) => Promise<void>;
+}) {
+  if (!opts.page.html?.trim()) return false;
+
+  const fallbackMarkdown = htmlToLocalMarkdown(opts.page.html, {
+    title: opts.page.title,
+    url: opts.page.url,
+  });
+  if (!fallbackMarkdown) return false;
+
+  opts.records.push({
+    url: opts.page.url,
+    markdown: fallbackMarkdown,
+    metadata: {
+      url: opts.page.url,
+      title: opts.page.title ?? undefined,
+      status: opts.page.statusCode ?? undefined,
+      depth: opts.page.depth,
+      content_type: opts.page.contentType ?? undefined,
+      links: opts.page.links,
+      source: "static-discovery",
+      markdown_source: "local-html-fallback",
+      cloudflare_markdown_error: opts.error,
+    },
+  });
+
+  await opts.emit({
+    event: "markdown_done",
+    message: `Converted ${opts.records.length} pages with local HTML fallback`,
+    data: {
+      url: opts.page.url,
+      depth: opts.page.depth,
+      markdown_chars: fallbackMarkdown.length,
+      converted_pages: opts.records.length,
+      fallback: "local-html",
+    },
+  });
+
+  return true;
+}
+
 function htmlToLocalMarkdown(html: string, opts: { title: string | null; url: string }) {
   const withoutNoise = html
     .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
@@ -726,6 +775,11 @@ function resolveMarkdownHref(rawHref: string, baseUrl: string) {
   } catch {
     return trimmed;
   }
+}
+
+function isCloudflareRateLimitErrorMessage(message: string) {
+  const normalized = message.toLowerCase();
+  return normalized.includes("rate limit") || normalized.includes("429");
 }
 
 async function waitForCrawl(
