@@ -161,6 +161,11 @@ function expandSearchQueries(messages: ChatMessage[], plannedQueries: string[]) 
     expanded.push("ICRA 2026 housing information AIM Austria official booking hotel warning scam");
   }
 
+  if (/\b(visa|invitation letter|support letter|travel document|embassy|consulate)\b/i.test(lastUser)) {
+    expanded.push("ICRA 2026 visa support invitation letter travel documents Austria attendees");
+    expanded.push("ICRA 2026 registration visa support international participants");
+  }
+
   const seen = new Set<string>();
   const unique: string[] = [];
   for (const query of expanded) {
@@ -656,9 +661,60 @@ export async function* ragStream(
     })),
   ];
 
-  // 6. Stream response
-  for await (const token of streamChat(site.modelId, chatMessages, site.temperature)) {
-    yield { type: "token", content: token };
+  // 6. Stream response. OpenRouter can inject provider errors into an already
+  // open SSE stream, so keep enough state to recover instead of dropping the
+  // retrieved sources and turning a partial answer into a generic failure.
+  let streamedText = "";
+  let recoveredFromStreamError = false;
+  try {
+    for await (const token of streamChat(site.modelId, chatMessages, site.temperature)) {
+      streamedText += token;
+      yield { type: "token", content: token };
+    }
+  } catch (e) {
+    yield {
+      type: "debug",
+      stage: "model_stream_error",
+      data: {
+        error: e instanceof Error ? e.message : String(e),
+        hadPartialResponse: streamedText.trim().length > 0,
+        partialLength: streamedText.length,
+      },
+    };
+
+    try {
+      const completion = await chatCompletion(
+        site.modelId,
+        chatMessages,
+        site.temperature,
+      );
+      const remainder = completionRemainder(completion, streamedText);
+      if (remainder.trim().length > 0) {
+        recoveredFromStreamError = true;
+        streamedText += remainder;
+        yield {
+          type: "debug",
+          stage: "model_stream_recovered",
+          data: { completionLength: completion.length, remainderLength: remainder.length },
+        };
+        yield { type: "token", content: remainder };
+      }
+    } catch (retryError) {
+      yield {
+        type: "debug",
+        stage: "model_stream_recovery_error",
+        data: {
+          error: retryError instanceof Error ? retryError.message : String(retryError),
+        },
+      };
+    }
+
+    if (!recoveredFromStreamError && countWords(streamedText) < 8) {
+      yield {
+        type: "error",
+        message: "Sorry, something went wrong. Please try again.",
+      };
+    }
   }
 
   // 7. Emit sources
@@ -730,6 +786,11 @@ function chunkPriority(chunk: RetrievedChunk, query: string) {
     if (url.includes("2026.ieee-icra.org/attend/housing-information")) score += 90;
   }
 
+  if (/\b(visa|invitation letter|support letter|travel document|embassy|consulate)\b/.test(q)) {
+    if (url.includes("2026.ieee-icra.org/attend/visa-support")) score += 100;
+    if (url.includes("2026.ieee-icra.org/attend/registration")) score += 35;
+  }
+
   return score;
 }
 
@@ -739,6 +800,36 @@ function numericScore(chunk: RetrievedChunk) {
   const rrfScore = chunk.metadata.rrf_score;
   if (typeof rrfScore === "number" && Number.isFinite(rrfScore)) return rrfScore;
   return chunk.score;
+}
+
+function completionRemainder(completion: string, streamedText: string) {
+  if (!completion) return "";
+  if (!streamedText) return completion;
+  if (completion.startsWith(streamedText)) {
+    return completion.slice(streamedText.length);
+  }
+
+  const partial = streamedText.trim();
+  if (!partial) return completion;
+  if (completion.startsWith(partial)) {
+    return completion.slice(partial.length);
+  }
+
+  const lastWords = partial.split(/\s+/).slice(-3).join(" ");
+  const overlapIndex = lastWords ? completion.indexOf(lastWords) : -1;
+  if (overlapIndex >= 0) {
+    return completion.slice(overlapIndex + lastWords.length);
+  }
+
+  if (countWords(streamedText) <= 2) {
+    return `\n\n${completion}`;
+  }
+
+  return "";
+}
+
+function countWords(value: string) {
+  return value.trim().split(/\s+/).filter(Boolean).length;
 }
 
 function displayTitle(chunk: RetrievedChunk) {

@@ -125,6 +125,9 @@ export async function POST(req: NextRequest) {
       let retrievalSpan: any = null;
       let retrievalSummary: Record<string, unknown> | null = null;
       let retrievalChunks: Array<Record<string, unknown>> = [];
+      let modelStreamErrored = false;
+      let modelStreamRecovered = false;
+      let ragErrorMessage: string | null = null;
 
       const span =
         trace?.span?.({
@@ -216,6 +219,10 @@ export async function POST(req: NextRequest) {
                 metadata: retrievalSummary ?? {},
               });
               retrievalSpan = null;
+            } else if (event.stage === "model_stream_error") {
+              modelStreamErrored = true;
+            } else if (event.stage === "model_stream_recovered") {
+              modelStreamRecovered = true;
             }
             span?.event?.({
               name: event.stage,
@@ -223,16 +230,23 @@ export async function POST(req: NextRequest) {
               metadata: event.data,
             });
           } else if (event.type === "error") {
+            ragErrorMessage = event.message;
             span?.event?.({
               name: "rag_error",
               level: "ERROR",
               metadata: { message: event.message },
             });
+            if (fullResponse.trim().split(/\s+/).filter(Boolean).length < 8) {
+              send(JSON.stringify({ type: "error", message: event.message }));
+            }
           }
         }
       } catch (err) {
         const msg = "Sorry, something went wrong. Please try again.";
-        send(JSON.stringify({ type: "error", message: msg }));
+        modelStreamErrored = true;
+        if (fullResponse.trim().split(/\s+/).filter(Boolean).length < 8) {
+          send(JSON.stringify({ type: "error", message: msg }));
+        }
         console.error("[chat] stream error:", err);
         generation?.end?.({
           statusMessage: msg,
@@ -241,7 +255,13 @@ export async function POST(req: NextRequest) {
       } finally {
         // Only surface sources that the model actually referenced by page title.
         const sourcesCountBeforeFilter = sources.length;
-        const usedSources = sources.length ? filterSourcesByUsage(fullResponse, sources) : [];
+        const filteredSources = sources.length
+          ? filterSourcesByUsage(fullResponse, sources)
+          : [];
+        const usedSources =
+          sources.length && modelStreamErrored && !modelStreamRecovered && !filteredSources.length
+            ? sources.slice(0, 3)
+            : filteredSources;
         const usedSourcesCount = usedSources.length;
         // Defensive: close the retrieval span if a stream error skipped its end.
         retrievalSpan?.end?.({ metadata: retrievalSummary ?? {} });
@@ -272,6 +292,9 @@ export async function POST(req: NextRequest) {
           output: fullResponse,
           metadata: {
             sources,
+            modelStreamErrored,
+            modelStreamRecovered,
+            ragErrorMessage,
             latency: latencySec,
             timeToFirstToken: ttftSec,
             tokensPerSecond,
@@ -284,6 +307,9 @@ export async function POST(req: NextRequest) {
         span?.end?.({
           metadata: {
             sources,
+            modelStreamErrored,
+            modelStreamRecovered,
+            ragErrorMessage,
             latency: latencySec,
             timeToFirstToken: ttftSec,
           },
