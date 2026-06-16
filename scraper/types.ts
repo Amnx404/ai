@@ -5,6 +5,7 @@ export type ScrapeRequest = {
   respect_allowed_prefixes?: boolean;
   max_pages?: number;
   delay?: number;
+  scrape_markdown_split_max_chars?: number | null;
   user_agent?: string;
   page_fetcher?: "selenium" | "requests" | null;
   use_selenium?: boolean;

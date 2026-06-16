@@ -302,11 +302,12 @@ export async function runCloudflareScrape(
   await mkdir(pagesDir, { recursive: true });
   await mkdir(metadataDir, { recursive: true });
 
+  const recordsToWrite = splitMarkdownRecords(filteredRecords, markdownSplitMaxChars(request));
   const savedPages = await writePages({
     runDir,
     pagesDir,
     metadataDir,
-    records: filteredRecords,
+    records: recordsToWrite,
   });
 
   const browserSecondsUsed = crawlJobs.reduce((sum, job) => sum + (job.browser_seconds_used ?? 0), 0);
@@ -322,6 +323,7 @@ export async function runCloudflareScrape(
     requested_per_seed_limit: perSeedLimit,
     requested_depth: maxDepth,
     discovered_url_count: recordsByUrl.size,
+    source_record_count: filteredRecords.length,
     saved_page_count: savedPages.length,
     urls: savedPages.map((page) => page.url),
     cloudflare: {
@@ -546,11 +548,12 @@ async function runStaticDiscoveryMarkdownScrape(opts: {
   await mkdir(opts.pagesDir, { recursive: true });
   await mkdir(opts.metadataDir, { recursive: true });
 
+  const recordsToWrite = splitMarkdownRecords(filteredRecords, markdownSplitMaxChars(opts.request));
   const savedPages = await writePages({
     runDir: opts.runDir,
     pagesDir: opts.pagesDir,
     metadataDir: opts.metadataDir,
-    records: filteredRecords,
+    records: recordsToWrite,
   });
 
   const manifest = {
@@ -569,6 +572,7 @@ async function runStaticDiscoveryMarkdownScrape(opts: {
     failed_discovery_url_count: discovery.failedUrlCount,
     queued_url_count: discovery.queuedUrlCount,
     markdown_failure_count: markdownFailures.length,
+    source_record_count: filteredRecords.length,
     saved_page_count: savedPages.length,
     urls: savedPages.map((page) => page.url),
     cloudflare: {
@@ -604,6 +608,7 @@ async function runStaticDiscoveryMarkdownScrape(opts: {
       provider: "cloudflare",
       cloudflare_discovery_mode: "static",
       cloudflare_static_discovery_scope: cloudflareStaticDiscoveryScope(opts.request),
+      source_record_count: filteredRecords.length,
       cloudflare_markdown_requests: records.length + markdownFailures.length,
       cloudflare_markdown_failure_count: markdownFailures.length,
     },
@@ -1113,6 +1118,112 @@ function filterRecords(
   });
 }
 
+function markdownSplitMaxChars(request: ScrapeRequest) {
+  return clampOptionalInteger(
+    request.scrape_markdown_split_max_chars ?? process.env.SCRAPER_MARKDOWN_SPLIT_MAX_CHARS,
+    1_000,
+    50_000,
+  );
+}
+
+function splitMarkdownRecords(records: CloudflareCrawlRecord[], maxChars: number | null) {
+  if (!maxChars) return records;
+  return records.flatMap((record) => splitMarkdownRecord(record, maxChars));
+}
+
+function splitMarkdownRecord(record: CloudflareCrawlRecord, maxChars: number) {
+  const markdown = record.markdown?.trim();
+  if (!markdown || markdown.length <= maxChars) return [record];
+
+  const parts = splitMarkdownText(markdown, maxChars);
+  if (parts.length <= 1) return [record];
+
+  const originalUrl = record.metadata?.url ?? record.url ?? "";
+  const originalTitle = typeof record.metadata?.title === "string" ? record.metadata.title : null;
+
+  return parts.map((part, index) => ({
+    ...record,
+    markdown: part.text,
+    metadata: {
+      ...record.metadata,
+      url: originalUrl,
+      title: splitRecordTitle(originalTitle, part.heading, index + 1, parts.length),
+      source_url: originalUrl,
+      split_index: index + 1,
+      split_count: parts.length,
+      split_max_chars: maxChars,
+    },
+  }));
+}
+
+function splitMarkdownText(markdown: string, maxChars: number) {
+  const parts: Array<{ text: string; heading: string | null }> = [];
+  let current = "";
+  let currentHeading: string | null = null;
+
+  for (const block of markdownBlocks(markdown)) {
+    const blockHeading = markdownHeading(block);
+    if (current && current.length + block.length + 2 > maxChars) {
+      parts.push({ text: current.trim(), heading: currentHeading });
+      current = "";
+      currentHeading = null;
+    }
+
+    if (block.length > maxChars) {
+      const chunks = splitOversizedMarkdownBlock(block, maxChars);
+      for (const chunk of chunks) {
+        if (current) {
+          parts.push({ text: current.trim(), heading: currentHeading });
+          current = "";
+          currentHeading = null;
+        }
+        parts.push({ text: chunk.trim(), heading: blockHeading });
+      }
+      continue;
+    }
+
+    current = current ? `${current}\n\n${block}` : block;
+    if (!currentHeading && blockHeading) currentHeading = blockHeading;
+  }
+
+  if (current.trim()) parts.push({ text: current.trim(), heading: currentHeading });
+  return parts.filter((part) => part.text.length > 0);
+}
+
+function markdownBlocks(markdown: string) {
+  return markdown
+    .replace(/\r\n/g, "\n")
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+}
+
+function markdownHeading(block: string) {
+  const match = block.match(/^#{1,6}\s+(.+)$/m);
+  return match?.[1]?.replace(/\s+/g, " ").trim() || null;
+}
+
+function splitOversizedMarkdownBlock(block: string, maxChars: number) {
+  const chunks: string[] = [];
+  let cursor = 0;
+  while (cursor < block.length) {
+    const hardEnd = Math.min(block.length, cursor + maxChars);
+    const sentenceBreak = block.lastIndexOf(". ", hardEnd);
+    const lineBreak = block.lastIndexOf("\n", hardEnd);
+    const softEnd = Math.max(sentenceBreak > cursor + maxChars * 0.45 ? sentenceBreak + 1 : 0, lineBreak);
+    const end = softEnd > cursor ? softEnd : hardEnd;
+    chunks.push(block.slice(cursor, end).trim());
+    cursor = end;
+  }
+  return chunks.filter(Boolean);
+}
+
+function splitRecordTitle(originalTitle: string | null, heading: string | null, index: number, count: number) {
+  const base = originalTitle?.trim() || "Source";
+  if (heading && !base.toLowerCase().includes(heading.toLowerCase())) return `${base}: ${heading}`;
+  return count > 1 ? `${base} (${index}/${count})` : base;
+}
+
 async function writePages(opts: {
   runDir: string;
   pagesDir: string;
@@ -1463,6 +1574,13 @@ function numberOrNull(value: unknown) {
 function clampInteger(value: unknown, fallback: number, min: number, max: number) {
   const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
   if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.trunc(n)));
+}
+
+function clampOptionalInteger(value: unknown, min: number, max: number) {
+  if (value === null || typeof value === "undefined" || value === "") return null;
+  const n = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  if (!Number.isFinite(n)) return null;
   return Math.min(max, Math.max(min, Math.trunc(n)));
 }
 

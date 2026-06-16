@@ -24,6 +24,12 @@ export function normalizeScrapeConfigObject(input: unknown): Record<string, unkn
     else delete out.max_pages;
   }
 
+  if ("scrape_markdown_split_max_chars" in out) {
+    const n = toFiniteNumber(out.scrape_markdown_split_max_chars);
+    if (n !== null && n >= 1000) out.scrape_markdown_split_max_chars = Math.trunc(n);
+    else delete out.scrape_markdown_split_max_chars;
+  }
+
   if ("cloudflare_per_seed_limit" in out) {
     const n = toFiniteNumber(out.cloudflare_per_seed_limit);
     if (n !== null && n >= 1) out.cloudflare_per_seed_limit = Math.trunc(n);

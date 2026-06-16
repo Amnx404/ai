@@ -144,6 +144,10 @@ export async function POST(req: NextRequest) {
       : [],
     max_pages: typeof scrapeConfig.max_pages === "number" ? scrapeConfig.max_pages : 10,
     delay: typeof scrapeConfig.delay === "number" ? scrapeConfig.delay : 0.5,
+    scrape_markdown_split_max_chars:
+      typeof scrapeConfig.scrape_markdown_split_max_chars === "number"
+        ? scrapeConfig.scrape_markdown_split_max_chars
+        : undefined,
     parallel_workers: typeof scrapeConfig.parallel_workers === "number" ? scrapeConfig.parallel_workers : 4,
     max_depth: typeof scrapeConfig.max_depth === "number" ? scrapeConfig.max_depth : 1,
     skip_map: scrapeConfig.skip_map === true,

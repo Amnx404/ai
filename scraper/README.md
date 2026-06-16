@@ -43,6 +43,7 @@ The scraper filters results locally against `allowed_prefixes` and writes markdo
 - `scrape_provider: "cloudflare"` uses Cloudflare Browser Run. By default it uses `cloudflare_discovery_mode: "crawl"` with Browser Run `/crawl`. That mode uses `cloudflare_render_mode: "auto"`: try a cheap static crawl first, then retry that seed with browser rendering if the static output is empty or looks like a JavaScript app shell.
 - `cloudflare_discovery_mode: "static"` keeps discovery local: the scraper fetches static HTML with the repo's BFS, `allowed_prefixes`, and URL whitelist/blacklist rules, then sends each discovered HTML document to Cloudflare `/markdown`. Use this for docs sites and event pages where link discovery must behave like the old Selenium/static scraper without paying Cloudflare to discover every sidebar link.
 - `cloudflare_static_discovery_scope: "allowed_prefixes"` keeps `seed_urls` as the canonical start pages but also lets static discovery enqueue allowed-prefix roots as scope roots. Use it when a site should have one visible base page while trusted allowed areas may be crawled as their own roots.
+- `scrape_markdown_split_max_chars` can split very large Markdown outputs into section-sized saved documents before prepare/upload. This keeps the same source URLs but improves citation granularity for large docs and long single-page sites.
 - `scrape_provider: "firecrawl"` keeps the previous Firecrawl map + batch scrape behavior.
 - If a request does not include `scrape_provider`, the scraper uses `SCRAPER_SCRAPE_PROVIDER` / `SCRAPER_PROVIDER`, falling back to `cloudflare`.
 
@@ -60,6 +61,7 @@ Cloudflare `/crawl` accepts wildcard include/exclude patterns, so the scraper co
 - `CLOUDFLARE_CRAWL_RENDER_MODE` defaults to `auto`. Use `static` to force `render: false`, or `browser` to force `render: true`.
 - `CLOUDFLARE_DISCOVERY_MODE` defaults to `crawl`. Use `static` to fetch links locally and use Cloudflare only for Markdown conversion.
 - `CLOUDFLARE_STATIC_DISCOVERY_SCOPE` defaults to `seed`. Set it to `allowed_prefixes` to let static discovery crawl allowed-prefix roots without adding them to `seed_urls`.
+- `SCRAPER_MARKDOWN_SPLIT_MAX_CHARS` is disabled by default. Set it to a positive character limit, or pass `scrape_markdown_split_max_chars` in a request, to split long Markdown records before saving pages.
 - `CLOUDFLARE_DISCOVERY_TIMEOUT_MS` defaults to `15000`.
 - `CLOUDFLARE_DISCOVERY_DELAY_SECONDS` defaults to `0`; use this only to slow local HTML discovery.
 - `CLOUDFLARE_CRAWL_RENDER` is still supported as a legacy boolean override.
