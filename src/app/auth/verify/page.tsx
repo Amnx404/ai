@@ -9,8 +9,8 @@ export default function VerifyPage() {
         </div>
         <h1 className="text-2xl font-bold text-gray-900">Check your email</h1>
         <p className="mt-2 text-sm text-gray-600">
-          A sign-in link has been sent to your email address. Click the link to
-          continue.
+          A 6-digit sign-in code has been sent to your email address. Return to
+          the sign-in page and enter the code to continue.
         </p>
         <p className="mt-4 text-xs text-gray-400">
           Didn&apos;t receive it? Check your spam folder or try again.

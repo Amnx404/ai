@@ -5,10 +5,9 @@ import {
   type DefaultSession,
   type NextAuthOptions,
 } from "next-auth";
-import EmailProvider from "next-auth/providers/email";
-import { Resend } from "resend";
+import CredentialsProvider from "next-auth/providers/credentials";
 
-import { env } from "~/env.js";
+import { authorizeEmailOtp } from "~/server/email-otp";
 import { db } from "~/server/db";
 
 declare module "next-auth" {
@@ -28,15 +27,6 @@ declare module "next-auth/jwt" {
     plan?: "FREE" | "PRO" | "MAX";
   }
 }
-
-function getResendClient() {
-  const key = env.RESEND_API_KEY;
-  if (!key) return null;
-  return new Resend(key);
-}
-
-const magicLinkFrom =
-  env.RESEND_FROM ?? "Alt Ego Team <onboarding@altegolabs.com>";
 
 function orgNameFromEmail(email: string | null | undefined) {
   const localPart = email?.split("@")[0]?.trim();
@@ -137,54 +127,18 @@ export const authOptions: NextAuthOptions = {
   },
   adapter: PrismaAdapter(db) as NextAuthOptions["adapter"],
   providers: [
-    EmailProvider({
-      from: magicLinkFrom,
-      sendVerificationRequest: async ({ identifier, url }) => {
-        const html = `
-            <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
-              <h2>Sign in to Alt Ego Labs</h2>
-              <p>Click the button below to sign in. This link expires in 24 hours.</p>
-              <a href="${url}" style="display:inline-block;padding:12px 24px;background:#6366f1;color:#fff;border-radius:8px;text-decoration:none;font-weight:600">
-                Sign in
-              </a>
-              <p style="color:#666;font-size:12px;margin-top:24px">
-                If you didn't request this, you can safely ignore this email.
-              </p>
-            </div>
-          `;
-
-        if (env.NODE_ENV === "development") {
-          console.log(
-            `\n[DEV] Magic link for ${identifier}. Paste this URL in the browser to sign in:\n${url}\n`,
-          );
-          return;
-        }
-
-        const resend = getResendClient();
-        if (resend) {
-          const { error } = await resend.emails.send({
-            from: magicLinkFrom,
-            to: identifier,
-            subject: "Sign in to Alt Ego Labs",
-            html,
-          });
-          if (error) {
-            console.error("[auth] Resend rejected magic link email:", error);
-            const msg =
-              typeof error === "object" &&
-              error !== null &&
-              "message" in error &&
-              typeof (error as { message: unknown }).message === "string"
-                ? (error as { message: string }).message
-                : "Resend could not send the email (check API key and domain).";
-            throw new Error(msg);
-          }
-          return;
-        }
-
-        throw new Error(
-          "RESEND_API_KEY is not set. Add it in Railway (Variables) to send magic links.",
-        );
+    CredentialsProvider({
+      id: "otp",
+      name: "Email code",
+      credentials: {
+        email: { label: "Email", type: "email" },
+        code: { label: "Code", type: "text" },
+      },
+      authorize: async (credentials) => {
+        const email =
+          typeof credentials?.email === "string" ? credentials.email : "";
+        const code = typeof credentials?.code === "string" ? credentials.code : "";
+        return authorizeEmailOtp(email, code);
       },
     }),
   ],
