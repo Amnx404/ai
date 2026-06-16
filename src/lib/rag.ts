@@ -89,6 +89,10 @@ async function planQueries(
   allowedTopics: string[],
   model: string
 ): Promise<string[]> {
+  const lastUser = [...messages].reverse().find((m) => m.role === "user");
+  if (!lastUser) return [];
+  if (!shouldUseQueryPlanner(messages)) return [lastUser.content];
+
   try {
     const raw = await chatCompletion(
       model,
@@ -119,8 +123,20 @@ async function planQueries(
   } catch {
     // fallback: use last user message
   }
-  const lastUser = [...messages].reverse().find((m) => m.role === "user");
-  return lastUser ? [lastUser.content] : [];
+  return [lastUser.content];
+}
+
+function shouldUseQueryPlanner(messages: ChatMessage[]) {
+  const recentMessages = messages.slice(-MAX_CONTEXT_MESSAGES);
+  const lastUser = [...recentMessages].reverse().find((m) => m.role === "user");
+  if (!lastUser) return false;
+
+  const hasAssistantContext = recentMessages.some((m) => m.role === "assistant");
+  if (!hasAssistantContext) return false;
+
+  return /\b(that|this|those|it|they|them|there|above|earlier|previous|same|also|what about|how about|which one)\b/i.test(
+    lastUser.content,
+  );
 }
 
 function lastUserContent(messages: ChatMessage[]) {
@@ -134,9 +150,10 @@ function expandSearchQueries(
 ) {
   const lastUser = lastUserContent(messages);
   const siteHint = buildSiteSearchHint(site);
+  const currentYearHint = currentYearQueryHint(lastUser);
   const priorityQueries: string[] = [];
   const scoped = (...terms: string[]) =>
-    [siteHint, lastUser, ...terms].filter(Boolean).join(" ");
+    [siteHint, lastUser, currentYearHint, ...terms].filter(Boolean).join(" ");
 
   if (
     /\b(attend|participat(?:e|ing|ion)?|join|compete|competition|race)\b/i.test(lastUser) &&
@@ -212,6 +229,48 @@ function buildSiteSearchHint(site: Pick<Site, "title" | "allowedTopics">) {
     .join(" ")
     .replace(/\s+/g, " ")
     .slice(0, 180);
+}
+
+function currentYearQueryHint(query: string) {
+  if (/\b20\d{2}\b/.test(query)) return "";
+  if (
+    !/\b(latest|current|upcoming|next|newest|this year|competition|race|event|registration|register|apply|application|rules?|visa|travel|housing|hotel|accommodation)\b/i.test(
+      query,
+    )
+  ) {
+    return "";
+  }
+  return `current latest ${new Date().getUTCFullYear()}`;
+}
+
+function quickResponseForMessage(
+  messages: ChatMessage[],
+  hasKnowledgeBase: boolean,
+) {
+  const lastUser = lastUserContent(messages);
+  const normalized = lastUser
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s']/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (/^(hi|hello|hey|yo|sup|what's up|whats up|hey what's up|hey whats up|good morning|good afternoon|good evening)$/.test(normalized)) {
+    return "Hey! I can help answer questions about this site.";
+  }
+
+  const asksAboutAccess =
+    /\b(do you|can you|are you able to|have you)\b.*\b(access|see|read|know|use)\b.*\b(latest|current|live|page|pages|website|site|knowledge)\b/i.test(
+      lastUser,
+    ) ||
+    /\b(latest|current|live)\s+(page|pages|website|site|knowledge base)\b.*\?/i.test(lastUser);
+
+  if (!asksAboutAccess) return null;
+
+  if (!hasKnowledgeBase) {
+    return "I do not see a published knowledge base for this widget yet. Add or refresh knowledge first, then I can answer from the indexed pages.";
+  }
+
+  return "I can search the site's indexed knowledge base, including pages that have been scraped and published. I do not live-browse the website on every message, so if a page changed after the last knowledge refresh, refresh the knowledge base first.";
 }
 
 function dedupeChunks(chunks: RetrievedChunk[]): RetrievedChunk[] {
@@ -484,6 +543,16 @@ export async function* ragStream(
   | { type: "error"; message: string }
 > {
   const liveNamespace = site.livePineconeNs?.trim() ?? "";
+  const quickResponse = quickResponseForMessage(messages, Boolean(liveNamespace));
+  if (quickResponse) {
+    yield {
+      type: "debug",
+      stage: "quick_response",
+      data: { reason: "small_talk_or_knowledge_access" },
+    };
+    yield { type: "token", content: quickResponse };
+    return;
+  }
 
   // 1. Plan search queries
   const plannedQueries = await planQueries(messages, site.allowedTopics, site.modelId);
@@ -519,58 +588,83 @@ export async function* ragStream(
       data: { reason: "missing_live_namespace" },
     };
   } else {
-    for (const query of queries) {
-      try {
-        const embedding = await embedText(query);
-        const chunks = await searchKnowledgeChunksDense({
-          siteId: site.id,
-          namespace: liveNamespace,
-          queryEmbedding: embedding,
-          limit: DENSE_TOP_K,
-          scoreThreshold: SCORE_THRESHOLD,
-        });
-        denseRetrievedCount += chunks.length;
-        allChunks.push(...chunks);
-      } catch (e) {
+    const retrievalResults = await Promise.all(
+      queries.flatMap((query) => [
+        (async (): Promise<{
+          query: string;
+          method: "dense";
+          chunks: RetrievedChunk[];
+          error?: string;
+        }> => {
+          try {
+            const embedding = await embedText(query);
+            const chunks = await searchKnowledgeChunksDense({
+              siteId: site.id,
+              namespace: liveNamespace,
+              queryEmbedding: embedding,
+              limit: DENSE_TOP_K,
+              scoreThreshold: SCORE_THRESHOLD,
+            });
+            return { query, method: "dense", chunks };
+          } catch (e) {
+            return {
+              query,
+              method: "dense",
+              chunks: [],
+              error: e instanceof Error ? e.message : String(e),
+            };
+          }
+        })(),
+        (async (): Promise<{
+          query: string;
+          method: "lexical";
+          chunks: RetrievedChunk[];
+          error?: string;
+        }> => {
+          try {
+            const chunks = await searchKnowledgeChunks({
+              siteId: site.id,
+              namespace: liveNamespace,
+              query,
+              limit: LEXICAL_TOP_K,
+            });
+            return { query, method: "lexical", chunks };
+          } catch (e) {
+            return {
+              query,
+              method: "lexical",
+              chunks: [],
+              error: e instanceof Error ? e.message : String(e),
+            };
+          }
+        })(),
+      ]),
+    );
+
+    for (const result of retrievalResults) {
+      if (result.error) {
         retrievalErrors.push({
-          query,
-          method: "dense",
-          error: e instanceof Error ? e.message : String(e),
+          query: result.query,
+          method: result.method,
+          error: result.error,
         });
         yield {
           type: "debug",
-          stage: "dense_retrieval_error",
+          stage: `${result.method}_retrieval_error`,
           data: {
-            query,
-            error: e instanceof Error ? e.message : String(e),
+            query: result.query,
+            error: result.error,
           },
         };
+        continue;
       }
 
-      try {
-        const chunks = await searchKnowledgeChunks({
-          siteId: site.id,
-          namespace: liveNamespace,
-          query,
-          limit: LEXICAL_TOP_K,
-        });
-        lexicalRetrievedCount += chunks.length;
-        allChunks.push(...chunks);
-      } catch (e) {
-        retrievalErrors.push({
-          query,
-          method: "lexical",
-          error: e instanceof Error ? e.message : String(e),
-        });
-        yield {
-          type: "debug",
-          stage: "lexical_retrieval_error",
-          data: {
-            query,
-            error: e instanceof Error ? e.message : String(e),
-          },
-        };
+      if (result.method === "dense") {
+        denseRetrievedCount += result.chunks.length;
+      } else {
+        lexicalRetrievedCount += result.chunks.length;
       }
+      allChunks.push(...result.chunks);
     }
   }
 
