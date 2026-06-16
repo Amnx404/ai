@@ -23,7 +23,7 @@ Config file path: `/railway.json`
 | `callback_URL` | Same as `NEXTAUTH_URL` |
 | `WIDGET_JWT_SECRET` | Random secret for widget session tokens |
 | `OPENROUTER_API_KEY` | LLM (Gemini Flash) + embeddings (bge-m3) |
-| `SCRAPER_PIPELINE_BASE_URL` | Internal URL of the scraper service, e.g. `http://${{scraper.RAILWAY_PRIVATE_DOMAIN}}:${{scraper.PORT}}` |
+| `SCRAPER_PIPELINE_BASE_URL` | Internal URL of the scraper service, e.g. `http://scraper.railway.internal:8080` |
 
 **Optional variables:**
 
